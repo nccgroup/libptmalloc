@@ -30,7 +30,7 @@ except ImportError:
 import os
 from os.path import basename
 
-import importlib
+import importlib, binascii
 import sys
 import struct
 import traceback
@@ -44,68 +44,14 @@ except Exception:
     print("[libptmalloc] Run 'python setup.py install' to use printers")
     sys.exit(1)
 
+import helper_gdb as hgdb
+importlib.reload(hgdb)
+import helper as h
+importlib.reload(h)
 
 ################################################################################
 # HELPERS
 ################################################################################
-
-# Taken from gef. Let's us see proper backtraces from python exceptions
-def show_last_exception():
-    PYTHON_MAJOR = sys.version_info[0]
-    horizontal_line = "-"
-    right_arrow = "->"
-    down_arrow = "\\->"
-
-    print("")
-    exc_type, exc_value, exc_traceback = sys.exc_info()
-    print(" Exception raised ".center(80, horizontal_line))
-    print("{}: {}".format(exc_type.__name__, exc_value))
-    print(" Detailed stacktrace ".center(80, horizontal_line))
-    for fs in traceback.extract_tb(exc_traceback)[::-1]:
-        if PYTHON_MAJOR==2:
-            filename, lineno, method, code = fs
-        else:
-            filename, lineno, method, code = fs.filename, fs.lineno, fs.name, fs.line
-
-        print("""{} File "{}", line {:d}, in {}()""".format(down_arrow, filename,
-                                                            lineno, method))
-        print("   {}    {}".format(right_arrow, code))
-
-
-
-# XXX - Not sure if these should go into pt_helper()
-def mutex_lock(ar_ptr, inferior=None):
-    if inferior == None:
-        inferior = get_inferior()
-
-    ar_ptr.mutex = 1
-    try:
-        inferior.write_memory(ar_ptr.address, struct.pack("<I", ar_ptr.mutex))
-    except gdb.MemoryError:
-        pass
-
-def mutex_unlock(ar_ptr, inferior=None):
-    if inferior == None:
-        inferior = get_inferior()
-
-    ar_ptr.mutex = 0
-    try:
-        inferior.write_memory(ar_ptr.address, struct.pack("<I", ar_ptr.mutex))
-    except gdb.MemoryError:
-        pass
-
-# XXX - Not sure if these should go into pt_helper()
-def get_inferior():
-    try:
-        if len(gdb.inferiors()) == 0:
-            print_error("No gdb inferior could be found.")
-            return -1
-        else:
-            inferior = gdb.inferiors()[0]
-            return inferior
-    except AttributeError:
-        print_error("This gdb's python support is too old.")
-        exit()
 
 def gdb_backtrace(f):
     "decorator to let us show proper stack traces"
@@ -115,24 +61,7 @@ def gdb_backtrace(f):
         try:
             f(*args, **kwargs)
         except Exception:
-            show_last_exception()
-
-
-def has_inferior(f):
-    "decorator to make sure we have an inferior to operate on"
-
-    @wraps(f)
-    def with_inferior(*args, **kwargs):
-        inferior = get_inferior()
-        if inferior != -1:
-            if (inferior.pid != 0) and (inferior.pid is not None):
-                return f(*args, **kwargs)
-            else:
-                print_error("No debugee could be found.  Attach or start a program.")
-                exit()
-        else:
-            exit()
-    return with_inferior
+            h.show_last_exception()
 
 def read_proc_maps(pid):
     '''
@@ -318,7 +247,7 @@ class pt_helper():
     def inuse(self, p):
         "extract p's inuse bit"
         nextchunk_addr = p.address + (p.size & ~self.SIZE_BITS)
-        inferior = get_inferior()
+        inferior = hgdb.get_inferior()
         mem = inferior.read_memory(nextchunk_addr + self.SIZE_SZ, self.SIZE_SZ)
         if self.SIZE_SZ == 4:
             nextchunk_size = struct.unpack_from("<I", mem, 0x0)[0]
@@ -454,14 +383,14 @@ class pt_helper():
 
     def clear_fastchunks(self, M, inferior=None):
         if inferior == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
 
         M.flags |= self.FASTCHUNKS_BIT
         inferior.write_memory(M.address, struct.pack("<I", M.flags))
 
     def set_fastchunks(self, M, inferior=None):
         if inferior == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
 
         M.flags &= ~self.FASTCHUNKS_BIT
         inferior.write_memory(M.address, struct.pack("<I", M.flags))
@@ -475,14 +404,14 @@ class pt_helper():
 
     def set_noncontiguous(self, M, inferior=None):
         if inferior == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
 
         M.flags |= self.NONCONTIGUOUS_BIT
         inferior.write_memory(M.address, struct.pack("<I", M.flags))
 
     def set_contiguous(self, M, inferior=None):
         if inferior == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
 
         M.flags &= ~self.NONCONTIGUOUS_BIT
         inferior.write_memory(M.address, struct.pack("<I", M.flags))
@@ -587,7 +516,8 @@ class pt_helper():
                 cbinfo["size_sz"] = self.SIZE_SZ
 
                 extra = self.ptchunk_callback(cbinfo)
-                info.append(" " + extra)
+                if extra:
+                    info.append(" " + extra)
 
         info.append("\b")
         return ''.join(info)
@@ -886,7 +816,7 @@ class pt_structure(object):
         self.address = None
 
         if inferior == None:
-            self.inferior = get_inferior()
+            self.inferior = hgdb.get_inferior()
             if self.inferior == -1:
                 self.pt.logmsg("Error obtaining gdb inferior")
                 self.initOK = False
@@ -1287,7 +1217,7 @@ class pt_heap_info(pt_structure):
             self.address = addr
 
         if inferior == None and mem == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
             if inferior == -1:
                 return None
 
@@ -1366,7 +1296,7 @@ class pt_save_state(pt_structure):
             self.address = addr
 
         if inferior == None and mem == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
             if inferior == -1:
                 return None
 
@@ -1459,7 +1389,7 @@ class pt_arena(pt_structure):
             self.address = addr
 
         if inferior == None and mem == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
             if inferior == -1:
                 return None
 
@@ -1581,7 +1511,7 @@ class pt_malloc_par(pt_structure):
             self.address = addr
 
         if inferior == None and mem == None:
-            inferior = get_inferior()
+            inferior = hgdb.get_inferior()
             if inferior == -1:
                 return None
 
@@ -1765,7 +1695,7 @@ class ptstats(ptcmd):
         ar_ptr = pt_arena(self.pt, main_arena_address)
         print("6")
         while(1):
-            mutex_lock(ar_ptr)
+            hgdb.mutex_lock(ar_ptr)
 
             # account for top
             avail = self.pt.chunksize(pt_chunk(self.pt, self.pt.top(ar_ptr), inuse=True))
@@ -1805,7 +1735,7 @@ class ptstats(ptcmd):
             system_b += ar_ptr.max_system_mem
             in_use_b += (ar_ptr.max_system_mem - avail)
 
-            mutex_unlock(ar_ptr)
+            hgdb.mutex_unlock(ar_ptr)
             if ar_ptr.next == main_arena_address:
                 break
             else:
@@ -1911,7 +1841,7 @@ class ptchunk(ptcmd):
         super(ptchunk, self).__init__(pt, "ptchunk")
 
     def help(self):
-        self.pt.logmsg('usage: ptchunk [-v] [-f] [-x] [-c <count>] [-s <val] [--depth <depth>] <addr>')
+        self.pt.logmsg('usage: ptchunk [-v] [-f] [-x] [-p offset] [-c <count>] [-s <val] [--depth <depth>] <addr>')
         self.pt.logmsg(' -v      use verbose output (multiples for more verbosity)')
         self.pt.logmsg(' -f      use <addr> explicitly, rather than be smart')
         self.pt.logmsg(' -x      hexdump the chunk contents')
@@ -1919,7 +1849,9 @@ class ptchunk(ptcmd):
         self.pt.logmsg(' -c      number of chunks to print')
         self.pt.logmsg(' -s      search pattern when print chunks')
         self.pt.logmsg(' --depth how far into each chunk to search')
-        self.pt.logmsg(' -d     debug and force printing stuff')
+        self.pt.logmsg(' -d      debug and force printing stuff')
+        self.pt.logmsg(' -n      do not output the trailing newline (summary representation)')
+        self.pt.logmsg(' -p      print data inside at given offset (summary representation)')
         self.pt.logmsg(' <addr>  a ptmalloc chunk header')
         self.pt.logmsg('Flag legend: P=PREV_INUSE, M=MMAPPED, N=NON_MAIN_ARENA')
         return
@@ -1928,9 +1860,9 @@ class ptchunk(ptcmd):
         try:
             self.invoke_(arg, from_tty)
         except Exception:
-            show_last_exception()
+            h.show_last_exception()
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke_(self, arg, from_tty):
         "Usage can be obtained via ptchunk -h"
         if arg == '':
@@ -1940,16 +1872,19 @@ class ptchunk(ptcmd):
         verbose = 0
         force = False
         hexdump = False
+        no_newline = False
         maxbytes = 0
 
         c_found = False
         m_found = False
         s_found = False
+        p_found = False
         search_val = None
         search_depth = 0
         depth_found = False
         debug = False
         count = 1
+        print_offset = None
         for item in arg.split():
             if m_found:
                 if item.find("0x") != -1:
@@ -1960,16 +1895,26 @@ class ptchunk(ptcmd):
             if c_found:
                 count = int(item)
                 c_found = False
+            elif p_found:
+                try:
+                    print_offset = int(item)
+                except ValueError:
+                    print_offset = int(item, 16)
+                p_found = False
             elif item.find("-v") != -1:
                 verbose += 1
             elif item.find("-f") != -1:
                 force = True
+            elif item.find("-n") != -1:
+                no_newline = True
             elif item.find("-x") != -1:
                 hexdump = True
             elif item.find("-m") != -1:
                 m_found = True
             elif item.find("-c") != -1:
                 c_found = True
+            elif item.find("-p") != -1:
+                p_found = True
             elif s_found:
                 if item.find("0x") != -1:
                     search_val = item
@@ -1983,31 +1928,31 @@ class ptchunk(ptcmd):
             # XXX Probably make this a helper
             elif item.find("0x") != -1:
                 if item.find("-") != -1 or item.find("+") != -1:
-                    p = self.parse_var(item)
+                    addr = self.parse_var(item)
                 else:
                     try:
-                        p = int(item, 16)
+                        addr = int(item, 16)
                     except ValueError:
-                        p = self.parse_var(item)
+                        addr = self.parse_var(item)
             elif item.find("-s") != -1:
                 s_found = True
             elif item.find("--depth") != -1:
                 depth_found = True 
 
             elif item.find("$") != -1:
-                p = self.parse_var(item)
+                addr = self.parse_var(item)
             elif item.find("-d") != -1:
                 debug = True # This is an undocumented dev option
             elif item.find("-h") != -1:
                 self.help()
                 return
 
-        if p == None:
+        if addr == None:
             self.pt.logmsg("WARNING: No address supplied?")
             self.help()
             return
 
-        p = pt_chunk(self.pt, p)
+        p = pt_chunk(self.pt, addr)
         if p.initOK == False:
             return
         dump_offset = 0
@@ -2017,12 +1962,25 @@ class ptchunk(ptcmd):
                 # Don't print if the chunk doesn't have the pattern
                 if not self.pt.search_chunk(p, search_val, 
                         depth=search_depth):
-                    suffix = " [NO MATCH]"
+                    suffix += " [NO MATCH]"
                 else:
-                    suffix = " [MATCH]"
-
+                    suffix += " [MATCH]"
+            # XXX - the current representation is not really generic as we print the first short
+            # as an ID and the second 2 bytes as 2 characters. We may want to support passing the
+            # format string as an argument but this is already useful
+            if print_offset != None:
+                mem = hgdb.get_inferior().read_memory(p.data_address + print_offset, 4)
+                (id_, desc) = struct.unpack_from("<H2s", mem, 0x0)
+                if h.is_ascii(desc):
+                    suffix += " 0x%04x %s" % (id_, str(desc, encoding="utf-8"))
+                else:
+                    suffix += " 0x%04x hex(%s)" % (id_, str(binascii.hexlify(desc), encoding="utf-8"))
+                
             if verbose == 0:
-                print(self.pt.chunk_info(p) + suffix)
+                if no_newline:
+                    print(self.pt.chunk_info(p) + suffix, end="")
+                else:
+                    print(self.pt.chunk_info(p) + suffix)
             elif verbose == 1:
                 print(p)
                 if self.pt.ptchunk_callback != None:
@@ -2075,7 +2033,7 @@ class ptarena(ptcmd):
         self.pt.logmsg(' NOTE: Last defined mstate will be cached for future use')
         return
 
-    @has_inferior
+    @hgdb.has_inferior
     def list_arenas(self, arena_address=None):
         if arena_address == None:
             try:
@@ -2150,10 +2108,10 @@ class ptarena(ptcmd):
         try:
             self.invoke_(arg, from_tty)
         except Exception:
-            show_last_exception()
+            h.show_last_exception()
 
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke_(self, arg, from_tty):
 
         if self.pt.pt_cached_mstate == None and (arg == None or arg == ''):
@@ -2211,7 +2169,7 @@ class ptsearch(ptcmd):
         try:
             self.invoke_(arg, from_tty)
         except Exception:
-            show_last_exception()
+            h.show_last_exception()
 
     def invoke_(self, arg, from_tty):
         if arg == '':
@@ -2297,7 +2255,7 @@ class ptbin(ptcmd):
             return
 
         ar_ptr = pt_arena(self.pt, main_arena_address)
-        mutex_lock(ar_ptr)
+        hgdb.mutex_lock(ar_ptr)
 
         print_title("Bin Layout")
 
@@ -2327,7 +2285,7 @@ class ptbin(ptcmd):
         else:
             print("Bin {} empty.".format(int(arg)))
 
-        mutex_unlock(ar_ptr)
+        hgdb.mutex_unlock(ar_ptr)
 
 if __name__ == "__main__":
     pth = pt_helper()
