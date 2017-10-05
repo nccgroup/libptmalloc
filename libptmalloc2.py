@@ -49,6 +49,16 @@ importlib.reload(hgdb)
 import helper as h
 importlib.reload(h)
 
+class logger:
+    def logmsg(self, s, end=None):
+        if type(s) == str:
+            if end != None:
+                print("[libptmalloc] " + s, end=end)
+            else:
+                print("[libptmalloc] " + s)
+        else:
+            print(s)
+
 ################################################################################
 # HELPERS
 ################################################################################
@@ -1611,6 +1621,15 @@ class ptcmd(gdb.Command):
         self.pt = pt
         super(ptcmd, self).__init__(name, gdb.COMMAND_DATA, gdb.COMPLETE_NONE)
 
+    def logmsg(self, s, end=None):
+        if type(s) == str:
+            if end != None:
+                print("[libptmalloc] " + s, end=end)
+            else:
+                print("[libptmalloc] " + s)
+        else:
+            print(s)
+
     def parse_var(self, var):
         if self.pt.SIZE_SZ == 4:
             p = self.tohex(int(gdb.parse_and_eval(var)), 32)
@@ -1625,25 +1644,6 @@ class ptcmd(gdb.Command):
             return result[:-1]
         else:
             return result
-
-################################################################################
-class pthelp(ptcmd):
-    "Details about all libptmalloc gdb commands"
-
-    def __init__(self, pt, help_extra=None):
-        self.help_extra = help_extra
-        super(pthelp, self).__init__(pt, "pthelp")
-
-    def invoke(self, arg, from_tty):
-        self.pt.logmsg('ptmalloc commands for gdb')
-        if self.help_extra != None:
-            self.pt.logmsg(self.help_extra)
-        self.pt.logmsg('ptchunk    : show chunk contents (-v for verbose, -x for data dump)')
-        self.pt.logmsg('ptsearch   : search heap for hex value or address')
-        self.pt.logmsg('ptarena    : print mstate struct. caches address after first use')
-        self.pt.logmsg('ptcallback : print mstate struct. caches address after first use')
-        self.pt.logmsg('pthelp     : this help message')
-        self.pt.logmsg('NOTE: Pass -h to any of these commands for more extensive usage. Eg: ptchunk -h')
 
 ###############################################################################
 # XXX - fix if needed
@@ -1671,7 +1671,6 @@ class ptstats(ptcmd):
                             return
                         else:
                             main_arena_address = int(item[11:],16)
-                print("3")
         except RuntimeError:
             print_error("No frame is currently selected.")
             return
@@ -1679,7 +1678,6 @@ class ptstats(ptcmd):
             print_error("Debug glibc was not found.")
             return
 
-        print("4")
         if main_arena_address == 0:
             print_error("Invalid main_arena address (0)")
             return
@@ -1690,10 +1688,8 @@ class ptstats(ptcmd):
 
         print_title("Malloc Stats")
 
-        print("5")
         arena = 0
         ar_ptr = pt_arena(self.pt, main_arena_address)
-        print("6")
         while(1):
             hgdb.mutex_lock(ar_ptr)
 
@@ -2036,47 +2032,53 @@ class ptarena(ptcmd):
     @hgdb.has_inferior
     def list_arenas(self, arena_address=None):
         if arena_address == None:
-            try:
-                main_arena = gdb.selected_frame().read_var('main_arena')
-                arena_address = main_arena.address
-            except RuntimeError:
-                self.pt.logmsg("No gdb frame is currently selected.")
-                return
-            except ValueError:
+            if self.pt.pt_cached_mstate == None:
+                self.pt.logmsg("WARNING: No cached arena")
+
                 try:
-                    res = gdb.execute('x/x &main_arena', to_string=True)
-                    arena_address = int(res.strip().split()[0], 16)
-                except gdb.error:
-                    self.pt.logmsg("Debug glibc was not found.")
-                    return 
-                    
-                    # XXX - we don't support that yet 
-                    
-                    self.pt.logmsg("Guessing main_arena address via offset from libc.")
-
-                    #find heap by offset from end of libc in /proc
-                    # XXX - need to test this inferior call
-                    libc_end,heap_begin = read_proc_maps(inferior.pid)
-
-                    if self.pt.SIZE_SZ == 4:
-                        #__malloc_initialize_hook + 0x20
-                        #offset seems to be +0x380 on debug glibc,
-                        #+0x3a0 otherwise
-                        arena_address = libc_end + 0x3a0
-                    elif self.pt.SIZE_SZ == 8:
-                        #offset seems to be +0xe80 on debug glibc,
-                        #+0xea0 otherwise
-                        self.pt.arena_address = libc_end + 0xea0
-
-                    if libc_end == -1:
-                        print("Invalid address read via /proc")
+                    main_arena = gdb.selected_frame().read_var('main_arena')
+                    arena_address = main_arena.address
+                except RuntimeError:
+                    self.pt.logmsg("No gdb frame is currently selected.")
+                    return
+                except ValueError:
+                    try:
+                        res = gdb.execute('x/x &main_arena', to_string=True)
+                        arena_address = int(res.strip().split()[0], 16)
+                    except gdb.error:
+                        self.pt.logmsg("WARNING: Debug glibc was not found.")
                         return
 
-        if arena_address == 0 or arena_address == None:
-            self.pt.logmsg("Invalid arena address (0)")
-            return
+                        # XXX - we don't support that yet 
 
-        ar_ptr = pt_arena(self.pt, arena_address)
+                        self.pt.logmsg("Guessing main_arena address via offset from libc.")
+
+                        #find heap by offset from end of libc in /proc
+                        # XXX - need to test this inferior call
+                        libc_end,heap_begin = read_proc_maps(inferior.pid)
+
+                        if self.pt.SIZE_SZ == 4:
+                            #__malloc_initialize_hook + 0x20
+                            #offset seems to be +0x380 on debug glibc,
+                            #+0x3a0 otherwise
+                            arena_address = libc_end + 0x3a0
+                        elif self.pt.SIZE_SZ == 8:
+                            #offset seems to be +0xe80 on debug glibc,
+                            #+0xea0 otherwise
+                            self.pt.arena_address = libc_end + 0xea0
+
+                        if libc_end == -1:
+                            self.pt.logmsg("Invalid address read via /proc")
+                            return
+
+            else:
+                self.pt.logmsg("Using cached mstate")
+                ar_ptr = self.pt.pt_cached_mstate
+        else:    
+            if arena_address == 0 or arena_address == None:
+                self.pt.logmsg("Invalid arena address (0)")
+                return
+            ar_ptr = pt_arena(self.pt, arena_address)
 
         if ar_ptr.next == 0:
             self.pt.logmsg("No arenas could be correctly guessed.")
@@ -2115,7 +2117,7 @@ class ptarena(ptcmd):
     def invoke_(self, arg, from_tty):
 
         if self.pt.pt_cached_mstate == None and (arg == None or arg == ''):
-            print("Neither arena cached nor argument specified")
+            self.pt.logmsg("Neither arena cached nor argument specified")
             self.help()
             return
 
@@ -2141,12 +2143,14 @@ class ptarena(ptcmd):
             return
 
         if p == None and self.pt.pt_cached_mstate == None:
-            print("WARNING: No address supplied?")
+            self.pt.logmsg("WARNING: No address supplied?")
             self.help()
             return
 
         if p != None:
             p = pt_arena(self.pt, p)
+            self.pt.logmsg("Caching mstate")
+            self.pt.pt_cached_mstate = p
         else:
             self.pt.logmsg("Using cached mstate")
             p = self.pt.pt_cached_mstate
@@ -2287,6 +2291,156 @@ class ptbin(ptcmd):
 
         hgdb.mutex_unlock(ar_ptr)
 
+################################################################################
+def get_arenas(pt):
+    try:
+        arenas = []
+        bin_name = hgdb.get_info()
+        log = logger()
+
+        if pt.pt_cached_mstate == None:
+            log.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
+            return
+        main_arena = pt.pt_cached_mstate.address
+
+        res = gdb.execute("ptarena -l 0x%x" % main_arena, to_string=True)
+        res = res.split("\n")
+        # format is: ['Arena(s) found:', '\t arena @ 0x7ffff4c9b620', '\t arena @ 0x7fffa4000020', ... ]
+        for line in res:
+            result = re.match("\t arena @ (.*)", line)
+            if result:
+                arenas.append(int(result.group(1), 16))
+        arenas.sort()
+        return arenas
+    except Exception as e:
+        h.show_last_exception()  
+
+
+# infile.txt needs to contains something like:
+#0x7fffc03cc650
+#0x7fffb440cae0
+#0x7fffb440c5e0
+# XXX - we could just save all arenas when doing ptarena -l in the first place
+arenas = None
+class ptarenaof(ptcmd):
+
+    def __init__(self, pt):
+        super(ptarenaof, self).__init__(pt, "ptarenaof")
+
+    def help(self):
+        self.logmsg('usage: ptarenaof <addr>|<infile.txt>')
+        self.logmsg(' <addr>  a ptmalloc chunk header')
+        self.logmsg(' <infile.txt> a filename for a file containing one ptmalloc chunk header address per line')
+        return
+    
+    def invoke(self, arg, from_tty):
+        global arenas
+        try:
+            if arg == '' or arg == "-h":
+                self.help()
+                return
+            
+            if self.pt.pt_cached_mstate == None:
+                self.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
+                self.help()
+                return
+        
+            arg = arg.split()
+            try:
+                addresses = [int(arg[0], 16)]
+            except ValueError:
+                self.logmsg("Reading from file: %s" % arg[0])
+                fd = open(arg[0], "r")
+                addresses = [int(l[:-1], 16) for l in fd]
+
+            if not arenas:
+                self.logmsg("Loading arenas")
+                arenas = get_arenas(self.pt)
+                #self.logmsg("Found arenas: " + "".join(["0x%x, " % a for a in arenas]))
+
+            addr_seen = set([])
+            for addr in addresses:
+                ar = addr & 0xffffffffff000000
+                ar += 0x20
+                if ar not in arenas:
+                    #self.logmsg("Warning: arena not found for 0x%x, finding closest candidate" % addr)
+                    # we previously sorted arenas so we can easily find it
+                    bFound = False
+                    for i in range(len(arenas)-1):
+                        if ar >= arenas[i] and ar < arenas[i+1]:
+                            ar = arenas[i]
+                            bFound = True
+                            break
+                    if not bFound:
+                        if ar > arenas[-1]:
+                            ar = arenas[-1]
+                        else:
+                            self.logmsg("Could not find arena for 0x%x, skipping" % addr)
+                            continue
+                if ar not in addr_seen:
+                    #self.logmsg("arena: 0x%x" % ar)
+                    addr_seen.add(ar)
+            if addr_seen:
+                self.logmsg("Seen arenas: " + "".join(["0x%x," % a for a in sorted(list(addr_seen))]))
+        except Exception as e:
+            h.show_last_exception()   
+
+
+################################################################################
+# E.g. usage:
+#(gdb) ptscanchunks 0x7fffb4000020,0x7fffbc000020
+class ptscanchunks(ptcmd):
+
+    def __init__(self, pt):
+        super(ptscanchunks, self).__init__(pt, "ptscanchunks")
+
+    def help(self):
+        self.logmsg('usage: ptscanchunks [<addr_list>')
+        self.logmsg(' <addr>  comma separated list of arena addresses')
+        return
+    
+    def invoke(self, arg, from_tty):
+        try:
+            if arg == '':
+                self.help()
+                return
+
+            arg = arg.split(",")
+            if arg[-1] == "":
+                arg = arg[:-1]
+
+            for ar in arg:
+                addr = int(ar, 16)
+                # XXX - fix that empirically first chunk is NOT always at 0x8b0
+                addr = addr & 0xffffffffff000000
+                addr += 0x8b0
+                self.logmsg("Scanning 0x%x ..." % addr)
+                res = gdb.execute("ptchunk 0x%x -c 1000000" % addr, to_string=False)
+
+        except Exception as e:
+            h.show_last_exception()
+
+################################################################################
+class pthelp(ptcmd):
+    "Details about all libptmalloc gdb commands"
+
+    def __init__(self, pt, help_extra=None):
+        self.help_extra = help_extra
+        super(pthelp, self).__init__(pt, "pthelp")
+
+    def invoke(self, arg, from_tty):
+        self.pt.logmsg('ptmalloc commands for gdb')
+        if self.help_extra != None:
+            self.pt.logmsg(self.help_extra)
+        self.pt.logmsg('ptchunk      : show chunk contents (-v for verbose, -x for data dump)')
+        self.pt.logmsg('ptsearch     : search heap for hex value or address')
+        self.pt.logmsg('ptarena      : print mstate struct. caches address after first use')
+        self.pt.logmsg('ptcallback   : print mstate struct. caches address after first use')
+        self.pt.logmsg('ptarenaof    : print arena for a given chunk or a list of chunks')
+        self.pt.logmsg('ptscanchunks : print all chunks for all provided arenas')
+        self.pt.logmsg('pthelp     : this help message')
+        self.pt.logmsg('NOTE: Pass -h to any of these commands for more extensive usage. Eg: ptchunk -h')
+
 if __name__ == "__main__":
     pth = pt_helper()
 
@@ -2297,4 +2451,6 @@ if __name__ == "__main__":
     ptsearch(pth)
     ptstats(pth)
     ptbin(pth)
+    ptarenaof(pth)
+    ptscanchunks(pth)
     pth.logmsg("loaded")
