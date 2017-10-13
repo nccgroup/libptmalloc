@@ -1879,8 +1879,9 @@ class ptchunk(ptcmd):
         search_depth = 0
         depth_found = False
         debug = False
-        count = 1
+        count_ = 1
         print_offset = None
+        addresses = []
         for item in arg.split():
             if m_found:
                 if item.find("0x") != -1:
@@ -1889,7 +1890,7 @@ class ptchunk(ptcmd):
                     maxbytes = int(item)
                 m_found = False
             if c_found:
-                count = int(item)
+                count_ = int(item)
                 c_found = False
             elif p_found:
                 try:
@@ -1930,6 +1931,7 @@ class ptchunk(ptcmd):
                         addr = int(item, 16)
                     except ValueError:
                         addr = self.parse_var(item)
+                addresses.append(addr)
             elif item.find("-s") != -1:
                 s_found = True
             elif item.find("--depth") != -1:
@@ -1937,82 +1939,90 @@ class ptchunk(ptcmd):
 
             elif item.find("$") != -1:
                 addr = self.parse_var(item)
+                addresses.append(addr)
             elif item.find("-d") != -1:
                 debug = True # This is an undocumented dev option
             elif item.find("-h") != -1:
                 self.help()
                 return
 
-        if addr == None:
+        if not addresses or None in addresses:
             self.pt.logmsg("WARNING: No address supplied?")
             self.help()
             return
 
-        p = pt_chunk(self.pt, addr)
-        if p.initOK == False:
-            return
-        dump_offset = 0
-        while True:
-            suffix = ""
-            if search_val != None:
-                # Don't print if the chunk doesn't have the pattern
-                if not self.pt.search_chunk(p, search_val, 
-                        depth=search_depth):
-                    suffix += " [NO MATCH]"
-                else:
-                    suffix += " [MATCH]"
-            # XXX - the current representation is not really generic as we print the first short
-            # as an ID and the second 2 bytes as 2 characters. We may want to support passing the
-            # format string as an argument but this is already useful
-            if print_offset != None:
-                mem = hgdb.get_inferior().read_memory(p.data_address + print_offset, 4)
-                (id_, desc) = struct.unpack_from("<H2s", mem, 0x0)
-                if h.is_ascii(desc):
-                    suffix += " 0x%04x %s" % (id_, str(desc, encoding="utf-8"))
-                else:
-                    suffix += " 0x%04x hex(%s)" % (id_, str(binascii.hexlify(desc), encoding="utf-8"))
-                
-            if verbose == 0:
-                if no_newline:
-                    print(self.pt.chunk_info(p) + suffix, end="")
-                else:
-                    print(self.pt.chunk_info(p) + suffix)
-            elif verbose == 1:
-                print(p)
-                if self.pt.ptchunk_callback != None:
-                    size = self.pt.chunksize(p) - p.hdr_size
-                    if p.data_address != None:
-                        # We can provide an excess of information and the
-                        # callback can choose what to use
-                        cbinfo = {}
-                        # XXX - Don't know if we need to send all this
-                        cbinfo["caller"] = "ptchunk"
-                        cbinfo["allocator"] = "ptmalloc"
-                        cbinfo["addr"] = p.data_address
-                        cbinfo["hdr_sz"] = p.hdr_size
-                        cbinfo["chunksz"] = self.pt.chunksize(p)
-                        cbinfo["min_hdr_sz"] = self.pt.INUSE_HDR_SZ
-                        cbinfo["data_size"] = size
-                        cbinfo["inuse"] = p.inuse
-                        cbinfo["size_sz"] = self.pt.SIZE_SZ
-                        if debug:
-                            cbinfo["debug"] = True
-                            print(cbinfo)
-                        # We expect callback to tell us how much data it
-                        # 'consumed' in printing out info
-                        dump_offset = self.pt.ptchunk_callback(cbinfo)
-                    # mem-based callbacks not yet supported
-            if hexdump:
-                self.pt.print_hexdump(p, maxbytes, dump_offset)
-            count -= 1
-            if count != 0:
-                if verbose == 1 or hexdump:
-                    print('--')
-                p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
-                if p.initOK == False:
-                    break
+        bFirst = True
+        for addr in addresses:
+            if bFirst:
+                bFirst = False
             else:
-                break
+                print("-"*60)
+            count = count_
+            p = pt_chunk(self.pt, addr)
+            if p.initOK == False:
+                return
+            dump_offset = 0
+            while True:
+                suffix = ""
+                if search_val != None:
+                    # Don't print if the chunk doesn't have the pattern
+                    if not self.pt.search_chunk(p, search_val, 
+                            depth=search_depth):
+                        suffix += " [NO MATCH]"
+                    else:
+                        suffix += " [MATCH]"
+                # XXX - the current representation is not really generic as we print the first short
+                # as an ID and the second 2 bytes as 2 characters. We may want to support passing the
+                # format string as an argument but this is already useful
+                if print_offset != None:
+                    mem = hgdb.get_inferior().read_memory(p.data_address + print_offset, 4)
+                    (id_, desc) = struct.unpack_from("<H2s", mem, 0x0)
+                    if h.is_ascii(desc):
+                        suffix += " 0x%04x %s" % (id_, str(desc, encoding="utf-8"))
+                    else:
+                        suffix += " 0x%04x hex(%s)" % (id_, str(binascii.hexlify(desc), encoding="utf-8"))
+
+                if verbose == 0:
+                    if no_newline:
+                        print(self.pt.chunk_info(p) + suffix, end="")
+                    else:
+                        print(self.pt.chunk_info(p) + suffix)
+                elif verbose == 1:
+                    print(p)
+                    if self.pt.ptchunk_callback != None:
+                        size = self.pt.chunksize(p) - p.hdr_size
+                        if p.data_address != None:
+                            # We can provide an excess of information and the
+                            # callback can choose what to use
+                            cbinfo = {}
+                            # XXX - Don't know if we need to send all this
+                            cbinfo["caller"] = "ptchunk"
+                            cbinfo["allocator"] = "ptmalloc"
+                            cbinfo["addr"] = p.data_address
+                            cbinfo["hdr_sz"] = p.hdr_size
+                            cbinfo["chunksz"] = self.pt.chunksize(p)
+                            cbinfo["min_hdr_sz"] = self.pt.INUSE_HDR_SZ
+                            cbinfo["data_size"] = size
+                            cbinfo["inuse"] = p.inuse
+                            cbinfo["size_sz"] = self.pt.SIZE_SZ
+                            if debug:
+                                cbinfo["debug"] = True
+                                print(cbinfo)
+                            # We expect callback to tell us how much data it
+                            # 'consumed' in printing out info
+                            dump_offset = self.pt.ptchunk_callback(cbinfo)
+                        # mem-based callbacks not yet supported
+                if hexdump:
+                    self.pt.print_hexdump(p, maxbytes, dump_offset)
+                count -= 1
+                if count != 0:
+                    if verbose == 1 or hexdump:
+                        print('--')
+                    p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
+                    if p.initOK == False:
+                        break
+                else:
+                    break
 
 ################################################################################
 class ptarena(ptcmd):
