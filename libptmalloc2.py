@@ -21,12 +21,6 @@
 #
 from __future__ import print_function
 
-try:
-    import gdb
-except ImportError:
-    print("Not running inside of GDB, exiting...")
-    exit()
-
 import os
 from os.path import basename
 
@@ -35,17 +29,27 @@ import sys
 import struct
 import traceback
 from functools import wraps
-try:
-    from printutils import *
-    from prettyprinters import *
-except Exception:
-    # XXX - find a way to actually import the ones from libptmalloc in case 
-    # we modify these files
-    print("[libptmalloc] Run 'python setup.py install' to use printers")
-    sys.exit(1)
 
-import helper_gdb as hgdb
-importlib.reload(hgdb)
+try:
+    import gdb
+    import helper_gdb as hgdb
+    importlib.reload(hgdb)
+    is_gdb = True
+
+except ImportError:
+    is_gdb = False
+    print("Not running inside of GDB, limited functionality...")
+    pass
+
+#try:
+#    from printutils import *
+#    from prettyprinters import *
+#except Exception:
+#    # XXX - find a way to actually import the ones from libptmalloc in case 
+#    # we modify these files
+#    print("[libptmalloc] Run 'python setup.py install' to use printers")
+#    sys.exit(1)
+
 import helper as h
 importlib.reload(h)
 
@@ -137,9 +141,30 @@ class pt_helper():
     HEAP_MIN_SIZE     = 32 * 1024
     HEAP_MAX_SIZE     = 1024 * 1024
 
-    def __init__(self):
+    def __init__(self, size_sz=0):
         self.terse = True # XXX - This should be configurable
-        self.retrieve_sizesz()
+        # Non-gdb users will have to specify the size themselves
+        if size_sz == 0:
+            self.retrieve_sizesz()
+        else:
+            self.SIZE_SZ = size_sz
+
+        self.INUSE_HDR_SZ      = 2 * self.SIZE_SZ
+        self.FREE_FASTCHUNK_HDR_SZ = 3 * self.SIZE_SZ
+        self.FREE_HDR_SZ       = 4 * self.SIZE_SZ
+        self.FREE_LARGE_HDR_SZ = 6 * self.SIZE_SZ
+
+        self.MIN_CHUNK_SIZE    = 4 * self.SIZE_SZ
+        self.MALLOC_ALIGNMENT  = 2 * self.SIZE_SZ
+        self.MALLOC_ALIGN_MASK = self.MALLOC_ALIGNMENT - 1
+        self.MINSIZE           = (self.MIN_CHUNK_SIZE+self.MALLOC_ALIGN_MASK) & ~self.MALLOC_ALIGN_MASK
+
+        self.SMALLBIN_WIDTH = self.MALLOC_ALIGNMENT
+        self.MIN_LARGE_SIZE = (self.NSMALLBINS * self.SMALLBIN_WIDTH)
+
+        self.MAX_FAST_SIZE = (80 * self.SIZE_SZ / 4)
+        self.NFASTBINS     = (self.fastbin_index(self.request2size(self.MAX_FAST_SIZE)) + 1)
+
         self.ptchunk_callback = None
         self.ptchunk_callback_cached = None
         # Assume we can re-use known mstate when not specified
@@ -167,21 +192,6 @@ class pt_helper():
         else:
             raise Exception("Retrieving the SIZE_SZ failed.")
 
-        self.INUSE_HDR_SZ      = 2 * self.SIZE_SZ
-        self.FREE_FASTCHUNK_HDR_SZ = 3 * self.SIZE_SZ
-        self.FREE_HDR_SZ       = 4 * self.SIZE_SZ
-        self.FREE_LARGE_HDR_SZ = 6 * self.SIZE_SZ
-
-        self.MIN_CHUNK_SIZE    = 4 * self.SIZE_SZ
-        self.MALLOC_ALIGNMENT  = 2 * self.SIZE_SZ
-        self.MALLOC_ALIGN_MASK = self.MALLOC_ALIGNMENT - 1
-        self.MINSIZE           = (self.MIN_CHUNK_SIZE+self.MALLOC_ALIGN_MASK) & ~self.MALLOC_ALIGN_MASK
-
-        self.SMALLBIN_WIDTH = self.MALLOC_ALIGNMENT
-        self.MIN_LARGE_SIZE = (self.NSMALLBINS * self.SMALLBIN_WIDTH)
-
-        self.MAX_FAST_SIZE = (80 * self.SIZE_SZ / 4)
-        self.NFASTBINS     = (self.fastbin_index(self.request2size(self.MAX_FAST_SIZE)) + 1)
 
     # This can be initialized to register a callback that will dump additional
     # embedded information while analyzing a ptmalloc chunk. An example (and why
@@ -257,6 +267,12 @@ class pt_helper():
     def inuse(self, p):
         "extract p's inuse bit"
         nextchunk_addr = p.address + (p.size & ~self.SIZE_BITS)
+        # XXX - We can't necessarily read the next chunk if not in gdb
+        if not is_gdb:
+            if self.inuse:
+                return 1
+            else:
+                return 0
         inferior = hgdb.get_inferior()
         mem = inferior.read_memory(nextchunk_addr + self.SIZE_SZ, self.SIZE_SZ)
         if self.SIZE_SZ == 4:
@@ -524,6 +540,8 @@ class pt_helper():
                 cbinfo["no_print"] = True
                 cbinfo["chunk_info"] = True
                 cbinfo["size_sz"] = self.SIZE_SZ
+                if p.from_mem:
+                    cbinfo["mem"] = p.mem[p.hdr_size:]
 
                 extra = self.ptchunk_callback(cbinfo)
                 if extra:
@@ -812,6 +830,29 @@ class pt_helper():
 
             p = pt_chunk(self, self.next_chunk(p), inuse=True)
 
+    def dispatch_callback(self, p, debug=False, caller="ptchunk"):
+        if self.ptchunk_callback != None:
+            size = self.chunksize(p) - p.hdr_size
+            if p.data_address != None:
+                # We can provide an excess of information and the
+                # callback can choose what to use
+                cbinfo = {}
+                # XXX - Don't know if we need to send all this
+                cbinfo["caller"] = "ptchunk_info"
+                cbinfo["allocator"] = "ptmalloc"
+                cbinfo["addr"] = p.data_address
+                cbinfo["hdr_sz"] = p.hdr_size
+                cbinfo["chunksz"] = self.chunksize(p)
+                cbinfo["min_hdr_sz"] = self.INUSE_HDR_SZ
+                cbinfo["data_size"] = size
+                cbinfo["inuse"] = p.inuse
+#                cbinfo["chunk_info"] = True
+                cbinfo["size_sz"] = self.SIZE_SZ
+                if p.from_mem:
+                    cbinfo["mem"] = p.mem[p.hdr_size:]
+
+                return self.ptchunk_callback(cbinfo)
+
 ################################################################################
 # STRUCTURES
 ################################################################################
@@ -825,7 +866,7 @@ class pt_structure(object):
         self.initOK = True
         self.address = None
 
-        if inferior == None:
+        if is_gdb and inferior == None:
             self.inferior = hgdb.get_inferior()
             if self.inferior == -1:
                 self.pt.logmsg("Error obtaining gdb inferior")
@@ -947,6 +988,9 @@ class pt_chunk(pt_structure):
         self.data_address = None
         self.hdr_size = 0
 
+        self.mem = mem
+        self.from_mem = False
+
         if not self.validate_addr(addr):
             return
 
@@ -965,6 +1009,7 @@ class pt_chunk(pt_structure):
                 self.initOK = False
                 return
         else:
+            self.from_mem = True
             # a string of raw memory was provided
             if self.inuse == True:
                 if (len(mem)<self.pt.INUSE_HDR_SZ):
@@ -988,23 +1033,26 @@ class pt_chunk(pt_structure):
             self.initOK = False
             return
 
-        # read next chunk size field to determine if current chunk is inuse
-        if size == None:
-            nextchunk_addr = self.address + (self.size & ~self.pt.SIZE_BITS)
-        else:
-            nextchunk_addr = self.address + (size & ~self.pt.SIZE_BITS)
-        try:
-            mem2 = self.inferior.read_memory(nextchunk_addr + self.pt.SIZE_SZ, 
-                    self.pt.SIZE_SZ)
-        except gdb.MemoryError:
-            self.pt.logmsg("Could not read nextchunk's size. Invalid chunk address?")
-            self.initOK = False
-            return
-        if self.pt.SIZE_SZ == 4:
-            nextchunk_size = struct.unpack_from("<I", mem2, 0x0)[0]
-        elif self.pt.SIZE_SZ == 8:
-            nextchunk_size = struct.unpack_from("<Q", mem2, 0x0)[0]
-        self.cinuse_bit = nextchunk_size & self.pt.PREV_INUSE
+        # XXX - We can only analyze the next chunk if inside gdb or some bigger
+        # mem. Need to add mem test
+        if is_gdb:
+            # read next chunk size field to determine if current chunk is inuse
+            if size == None:
+                nextchunk_addr = self.address + (self.size & ~self.pt.SIZE_BITS)
+            else:
+                nextchunk_addr = self.address + (size & ~self.pt.SIZE_BITS)
+            try:
+                mem2 = self.inferior.read_memory(nextchunk_addr + self.pt.SIZE_SZ, 
+                        self.pt.SIZE_SZ)
+            except gdb.MemoryError:
+                self.pt.logmsg("Could not read nextchunk's size. Invalid chunk address?")
+                self.initOK = False
+                return
+            if self.pt.SIZE_SZ == 4:
+                nextchunk_size = struct.unpack_from("<I", mem2, 0x0)[0]
+            elif self.pt.SIZE_SZ == 8:
+                nextchunk_size = struct.unpack_from("<Q", mem2, 0x0)[0]
+            self.cinuse_bit = nextchunk_size & self.pt.PREV_INUSE
 
         # XXX - hax (see TODO in file header). This shouldn't be released in
         # public version
@@ -1613,847 +1661,848 @@ class pt_malloc_par(pt_structure):
 # GDB COMMANDS
 ################################################################################
 
+if is_gdb:
 # This is a super class with few convenience methods to let all the cmds parse
 # gdb variables easily
-class ptcmd(gdb.Command):
+    class ptcmd(gdb.Command):
 
-    def __init__(self, pt, name):
-        self.pt = pt
-        super(ptcmd, self).__init__(name, gdb.COMMAND_DATA, gdb.COMPLETE_NONE)
+        def __init__(self, pt, name):
+            self.pt = pt
+            super(ptcmd, self).__init__(name, gdb.COMMAND_DATA, gdb.COMPLETE_NONE)
 
-    def logmsg(self, s, end=None):
-        if type(s) == str:
-            if end != None:
-                print("[libptmalloc] " + s, end=end)
-            else:
-                print("[libptmalloc] " + s)
-        else:
-            print(s)
-
-    def parse_var(self, var):
-        if self.pt.SIZE_SZ == 4:
-            p = self.tohex(int(gdb.parse_and_eval(var)), 32)
-        elif self.pt.SIZE_SZ == 8:
-            p = self.tohex(int(gdb.parse_and_eval(var)), 64)
-        return int(p, 16)
-
-    def tohex(self, val, nbits):
-        result = hex((val + (1 << nbits)) % (1 << nbits))
-        # -1 because hex() only sometimes tacks on a L to hex values...
-        if result[-1] == 'L':
-            return result[:-1]
-        else:
-            return result
-
-###############################################################################
-# XXX - fix if needed
-class ptstats(ptcmd):
-    "print general malloc stats, adapted from malloc.c mSTATs()"
-
-    def __init__(self, pt):
-        super(ptstats, self).__init__(pt, "print_mstats")
-
-    def invoke(self, arg, from_tty):
-        "Specify an optional arena addr: print_mstats main_arena=0x12345"
-
-        try:
-            mp = gdb.selected_frame().read_var('mp_')
-
-            if arg.find("main_arena") == -1:
-                main_arena = gdb.selected_frame().read_var('main_arena')
-                main_arena_address = main_arena.address
-            else:
-                arg = arg.split()
-                for item in arg:
-                    if item.find("main_arena") != -1:
-                        if len(item) < 12:
-                            print_error("Malformed main_arena parameter")
-                            return
-                        else:
-                            main_arena_address = int(item[11:],16)
-        except RuntimeError:
-            print_error("No frame is currently selected.")
-            return
-        except ValueError:
-            print_error("Debug glibc was not found.")
-            return
-
-        if main_arena_address == 0:
-            print_error("Invalid main_arena address (0)")
-            return
-
-        mp = pt_save_state(self.pt, mp_address)
-        in_use_b = mp.mmapped_mem
-        system_b = in_use_b
-
-        print_title("Malloc Stats")
-
-        arena = 0
-        ar_ptr = pt_arena(self.pt, main_arena_address)
-        while(1):
-            hgdb.mutex_lock(ar_ptr)
-
-            # account for top
-            avail = self.pt.chunksize(pt_chunk(self.pt, self.pt.top(ar_ptr), inuse=True))
-            nblocks = 1
-
-            nfastblocks = 0
-            fastavail = 0
-
-            # traverse fastbins
-            for i in range(self.pt.NFASTBINS):
-                p = self.pt.fastbin(ar_ptr, i)
-                while p!=0:
-                    p = pt_chunk(self.pt, p, inuse=False)
-                    nfastblocks += 1
-                    fastavail += self.pt.chunksize(p)
-                    p = p.fd
-
-            avail += fastavail
-
-            # traverse regular bins
-            for i in range(1, self.pt.NBINS):
-                b = self.pt.bin_at(ar_ptr, i)
-                p = pt_chunk(self.pt.first(pt_chunk(self.pt, b,inuse=False)), 
-                        inuse=False)
-
-                while p.address != int(b):
-                    nblocks += 1
-                    avail += self.pt.chunksize(p)
-                    p = pt_chunk(self.pt, self.pt.first(p), inuse=False)
-
-            print_header("Arena {}:\n".format(arena))
-            print("{:16} = ".format("system bytes"), end='')
-            print_value("{}".format(ar_ptr.max_system_mem), end='\n')
-            print("{:16} = ".format("in use bytes"), end='')
-            print_value("{}".format(ar_ptr.max_system_mem - avail), end='\n')
-
-            system_b += ar_ptr.max_system_mem
-            in_use_b += (ar_ptr.max_system_mem - avail)
-
-            hgdb.mutex_unlock(ar_ptr)
-            if ar_ptr.next == main_arena_address:
-                break
-            else:
-                ar_ptr = pt_arena(self.pt, ar_ptr.next)
-                arena += 1
-
-        print_header("Total (including mmap):\n")
-        print("{:16} = ".format("system bytes"), end='')
-        print_value("{}".format(system_b), end='\n')
-        print("{:16} = ".format("in use bytes"), end='')
-        print_value("{}".format(in_use_b), end='\n')
-        print("{:16} = ".format("max system bytes"), end='')
-        print_value("{}".format(mp['max_total_mem']), end='\n')
-        print("{:16} = ".format("max mmap regions"), end='')
-        print_value("{}".format(mp['max_n_mmaps']), end='\n')
-        print("{:16} = ".format("max mmap bytes"), end='')
-        print_value("{}".format(mp['max_mmapped_mem']), end='\n')
-
-################################################################################
-class ptcallback(ptcmd):
-    "Manage callbacks"
-
-    def __init__(self, pt):
-        super(ptcallback, self).__init__(pt, "ptcallback")
-
-    def help(self):
-        self.pt.logmsg('usage: ptcallback <options>')
-        self.pt.logmsg(' disable         temporarily disable the registered callback')
-        self.pt.logmsg(' enable          enable the registered callback')
-        self.pt.logmsg(' status          check if a callback is registered')
-        self.pt.logmsg(' clear           forget the registered callback')
-        self.pt.logmsg(' register <name> use a global function <name> as callback')
-        self.pt.logmsg(' register <name> <module> use a global function <name> as callback from <module>')
-
-    def invoke(self, arg, from_tty):
-        if arg == '':
-            self.help()
-            return
-
-        arg = arg.lower()
-        if arg.find("enable") != -1:
-            self.pt.ptchunk_callback = self.pt.ptchunk_callback_cached
-            self.pt.logmsg('callback enabled')
-            if self.pt.ptchunk_callback == None:
-                self.pt.logmsg('NOTE: callback was enabled, but is unset')
-        elif arg.find("disable") != -1:
-            self.pt.ptchunk_callback_cached = self.pt.ptchunk_callback
-            self.pt.ptchunk_callback = None
-            self.pt.logmsg('callback disabled')
-        elif arg.find("clear") != -1:
-            self.pt.ptchunk_callback = None
-            self.pt.ptchunk_callback_cached = None
-            self.pt.logmsg('callback cleared')
-        elif arg.find("status") != -1:
-            if self.pt.ptchunk_callback:
-                self.pt.logmsg('a callback is registered and enabled')
-            elif self.pt.ptchunk_callback == None and \
-                    self.pt.ptchunk_callback_cached:
-                self.pt.logmsg('a callback is registered and disabled')
-            else:
-                self.pt.logmsg('a callback is not registered')
-        elif arg.find("register") != -1:
-            args = arg.split(' ')
-            if len(args) < 2:
-                self.pt.logmsg('[!] Must specify object name')
-                self.help()
-                return
-            if args[1] not in globals():
-                if len(args) == 3:
-                    try:
-                        modpath = os.path.dirname(args[2])
-                        modname = os.path.basename(args[2])
-                        if modpath != "": 
-                            if modpath[0] == '/':
-                                sys.path.insert(0, modpath)
-                            else:
-                                sys.path.insert(0, os.path.join(os.getcwd(), 
-                                            modpath))
-                        mod  = importlib.import_module(modname)
-                        importlib.reload(mod)
-                        if args[1] in dir(mod):
-                            self.pt.ptchunk_callback = getattr(mod, args[1])
-                            self.pt.ptchunk_callback_cached = None
-                    except Exception as e:
-                        self.pt.logmsg("[!] Couldn't load module: %s" % args[2])
-                        print(e)
+        def logmsg(self, s, end=None):
+            if type(s) == str:
+                if end != None:
+                    print("[libptmalloc] " + s, end=end)
                 else:
-                    self.pt.logmsg("[!] Couldn't find object %s. Specify module" % 
-                            args[1])
-                    self.help()
+                    print("[libptmalloc] " + s)
             else:
-                self.pt.ptchunk_callback = globals()[args[1]]
-                self.pt.ptchunk_callback_cached = None
-            self.pt.logmsg('%s registered as callback' % args[1])
-        else:
-            self.help()
+                print(s)
 
-################################################################################
-class ptchunk(ptcmd):
-    "print a comprehensive view of a ptchunk"
+        def parse_var(self, var):
+            if self.pt.SIZE_SZ == 4:
+                p = self.tohex(int(gdb.parse_and_eval(var)), 32)
+            elif self.pt.SIZE_SZ == 8:
+                p = self.tohex(int(gdb.parse_and_eval(var)), 64)
+            return int(p, 16)
 
-    def __init__(self, pt):
-        super(ptchunk, self).__init__(pt, "ptchunk")
-
-    def help(self):
-        self.pt.logmsg('usage: ptchunk [-v] [-f] [-x] [-p offset] [-c <count>] [-s <val] [--depth <depth>] <addr>')
-        self.pt.logmsg(' -v      use verbose output (multiples for more verbosity)')
-        self.pt.logmsg(' -f      use <addr> explicitly, rather than be smart')
-        self.pt.logmsg(' -x      hexdump the chunk contents')
-        self.pt.logmsg(' -m      max bytes to dump with -x')
-        self.pt.logmsg(' -c      number of chunks to print')
-        self.pt.logmsg(' -s      search pattern when print chunks')
-        self.pt.logmsg(' --depth how far into each chunk to search')
-        self.pt.logmsg(' -d      debug and force printing stuff')
-        self.pt.logmsg(' -n      do not output the trailing newline (summary representation)')
-        self.pt.logmsg(' -p      print data inside at given offset (summary representation)')
-        self.pt.logmsg(' <addr>  a ptmalloc chunk header')
-        self.pt.logmsg('Flag legend: P=PREV_INUSE, M=MMAPPED, N=NON_MAIN_ARENA')
-        return
-
-    def invoke(self, arg, from_tty):
-        try:
-            self.invoke_(arg, from_tty)
-        except Exception:
-            h.show_last_exception()
-
-    @hgdb.has_inferior
-    def invoke_(self, arg, from_tty):
-        "Usage can be obtained via ptchunk -h"
-        if arg == '':
-            self.help()
-            return
-
-        verbose = 0
-        force = False
-        hexdump = False
-        no_newline = False
-        maxbytes = 0
-
-        c_found = False
-        m_found = False
-        s_found = False
-        p_found = False
-        search_val = None
-        search_depth = 0
-        depth_found = False
-        debug = False
-        count_ = 1
-        print_offset = None
-        addresses = []
-        for item in arg.split():
-            if m_found:
-                if item.find("0x") != -1:
-                    maxbytes = int(item, 16)
-                else:
-                    maxbytes = int(item)
-                m_found = False
-            if c_found:
-                count_ = int(item)
-                c_found = False
-            elif p_found:
-                try:
-                    print_offset = int(item)
-                except ValueError:
-                    print_offset = int(item, 16)
-                p_found = False
-            elif item.find("-v") != -1:
-                verbose += 1
-            elif item.find("-f") != -1:
-                force = True
-            elif item.find("-n") != -1:
-                no_newline = True
-            elif item.find("-x") != -1:
-                hexdump = True
-            elif item.find("-m") != -1:
-                m_found = True
-            elif item.find("-c") != -1:
-                c_found = True
-            elif item.find("-p") != -1:
-                p_found = True
-            elif s_found:
-                if item.find("0x") != -1:
-                    search_val = item
-                s_found = False
-            elif depth_found:
-                if item.find("0x") != -1:
-                    search_depth = int(item, 16)
-                else:
-                    search_depth = int(item)
-                depth_found = False
-            # XXX Probably make this a helper
-            elif item.find("0x") != -1:
-                if item.find("-") != -1 or item.find("+") != -1:
-                    addr = self.parse_var(item)
-                else:
-                    try:
-                        addr = int(item, 16)
-                    except ValueError:
-                        addr = self.parse_var(item)
-                addresses.append(addr)
-            elif item.find("-s") != -1:
-                s_found = True
-            elif item.find("--depth") != -1:
-                depth_found = True 
-
-            elif item.find("$") != -1:
-                addr = self.parse_var(item)
-                addresses.append(addr)
-            elif item.find("-d") != -1:
-                debug = True # This is an undocumented dev option
-            elif item.find("-h") != -1:
-                self.help()
-                return
-
-        if not addresses or None in addresses:
-            self.pt.logmsg("WARNING: No address supplied?")
-            self.help()
-            return
-
-        bFirst = True
-        for addr in addresses:
-            if bFirst:
-                bFirst = False
+        def tohex(self, val, nbits):
+            result = hex((val + (1 << nbits)) % (1 << nbits))
+            # -1 because hex() only sometimes tacks on a L to hex values...
+            if result[-1] == 'L':
+                return result[:-1]
             else:
-                print("-"*60)
-            count = count_
-            p = pt_chunk(self.pt, addr)
-            if p.initOK == False:
-                return
-            dump_offset = 0
-            while True:
-                suffix = ""
-                if search_val != None:
-                    # Don't print if the chunk doesn't have the pattern
-                    if not self.pt.search_chunk(p, search_val, 
-                            depth=search_depth):
-                        suffix += " [NO MATCH]"
-                    else:
-                        suffix += " [MATCH]"
-                # XXX - the current representation is not really generic as we print the first short
-                # as an ID and the second 2 bytes as 2 characters. We may want to support passing the
-                # format string as an argument but this is already useful
-                if print_offset != None:
-                    mem = hgdb.get_inferior().read_memory(p.data_address + print_offset, 4)
-                    (id_, desc) = struct.unpack_from("<H2s", mem, 0x0)
-                    if h.is_ascii(desc):
-                        suffix += " 0x%04x %s" % (id_, str(desc, encoding="utf-8"))
-                    else:
-                        suffix += " 0x%04x hex(%s)" % (id_, str(binascii.hexlify(desc), encoding="utf-8"))
+                return result
 
-                if verbose == 0:
-                    if no_newline:
-                        print(self.pt.chunk_info(p) + suffix, end="")
-                    else:
-                        print(self.pt.chunk_info(p) + suffix)
-                elif verbose == 1:
-                    print(p)
-                    if self.pt.ptchunk_callback != None:
-                        size = self.pt.chunksize(p) - p.hdr_size
-                        if p.data_address != None:
-                            # We can provide an excess of information and the
-                            # callback can choose what to use
-                            cbinfo = {}
-                            # XXX - Don't know if we need to send all this
-                            cbinfo["caller"] = "ptchunk"
-                            cbinfo["allocator"] = "ptmalloc"
-                            cbinfo["addr"] = p.data_address
-                            cbinfo["hdr_sz"] = p.hdr_size
-                            cbinfo["chunksz"] = self.pt.chunksize(p)
-                            cbinfo["min_hdr_sz"] = self.pt.INUSE_HDR_SZ
-                            cbinfo["data_size"] = size
-                            cbinfo["inuse"] = p.inuse
-                            cbinfo["size_sz"] = self.pt.SIZE_SZ
-                            if debug:
-                                cbinfo["debug"] = True
-                                print(cbinfo)
-                            # We expect callback to tell us how much data it
-                            # 'consumed' in printing out info
-                            dump_offset = self.pt.ptchunk_callback(cbinfo)
-                        # mem-based callbacks not yet supported
-                if hexdump:
-                    self.pt.print_hexdump(p, maxbytes, dump_offset)
-                count -= 1
-                if count != 0:
-                    if verbose == 1 or hexdump:
-                        print('--')
-                    p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
-                    if p.initOK == False:
-                        break
-                else:
-                    break
+    ###############################################################################
+    # XXX - fix if needed
+    class ptstats(ptcmd):
+        "print general malloc stats, adapted from malloc.c mSTATs()"
 
-################################################################################
-class ptarena(ptcmd):
-    "print a comprehensive view of an mstate which is representing an arena"
+        def __init__(self, pt):
+            super(ptstats, self).__init__(pt, "print_mstats")
 
-    def __init__(self, pt):
-        super(ptarena, self).__init__(pt, "ptarena")
+        def invoke(self, arg, from_tty):
+            "Specify an optional arena addr: print_mstats main_arena=0x12345"
 
-    def help(self):
-        self.pt.logmsg('usage: ptarena [-v] [-f] [-x] [-c <count>] <addr>')
-        self.pt.logmsg(' <addr> a ptmalloc mstate struct. Optional with cached mstate')
-        self.pt.logmsg(' -v     use verbose output (multiples for more verbosity)')
-        self.pt.logmsg(' -l     list arenas only')
-        self.pt.logmsg(' NOTE: Last defined mstate will be cached for future use')
-        return
-
-    @hgdb.has_inferior
-    def list_arenas(self, arena_address=None):
-        if arena_address == None:
-            if self.pt.pt_cached_mstate == None:
-                self.pt.logmsg("WARNING: No cached arena")
-
-                try:
-                    main_arena = gdb.selected_frame().read_var('main_arena')
-                    arena_address = main_arena.address
-                except RuntimeError:
-                    self.pt.logmsg("No gdb frame is currently selected.")
-                    return
-                except ValueError:
-                    try:
-                        res = gdb.execute('x/x &main_arena', to_string=True)
-                        arena_address = int(res.strip().split()[0], 16)
-                    except gdb.error:
-                        self.pt.logmsg("WARNING: Debug glibc was not found.")
-                        return
-
-                        # XXX - we don't support that yet 
-
-                        self.pt.logmsg("Guessing main_arena address via offset from libc.")
-
-                        #find heap by offset from end of libc in /proc
-                        # XXX - need to test this inferior call
-                        libc_end,heap_begin = read_proc_maps(inferior.pid)
-
-                        if self.pt.SIZE_SZ == 4:
-                            #__malloc_initialize_hook + 0x20
-                            #offset seems to be +0x380 on debug glibc,
-                            #+0x3a0 otherwise
-                            arena_address = libc_end + 0x3a0
-                        elif self.pt.SIZE_SZ == 8:
-                            #offset seems to be +0xe80 on debug glibc,
-                            #+0xea0 otherwise
-                            self.pt.arena_address = libc_end + 0xea0
-
-                        if libc_end == -1:
-                            self.pt.logmsg("Invalid address read via /proc")
-                            return
-
-            else:
-                self.pt.logmsg("Using cached mstate")
-                ar_ptr = self.pt.pt_cached_mstate
-        else:    
-            if arena_address == 0 or arena_address == None:
-                self.pt.logmsg("Invalid arena address (0)")
-                return
-            ar_ptr = pt_arena(self.pt, arena_address)
-
-        if ar_ptr.next == 0:
-            self.pt.logmsg("No arenas could be correctly guessed.")
-            self.pt.logmsg("Nothing was found at {0:#x}".format(ar_ptr.address))
-            return
-
-        print("Arena(s) found:")
-        try:
-            #arena address obtained via read_var
-            print("\t arena @ {:#x}".format(
-                    int(ar_ptr.address.cast(gdb.lookup_type("unsigned long")))))
-        except Exception:
-            #arena address obtained via -a
-            print("\t arena @ {:#x}".format(int(ar_ptr.address)))
-
-        if ar_ptr.address != ar_ptr.next:
-            #we have more than one arena
-
-            curr_arena = pt_arena(self.pt, ar_ptr.next)
-            while (ar_ptr.address != curr_arena.address):
-                print("\t arena @ {:#x}".format(int(curr_arena.address)))
-                curr_arena = pt_arena(self.pt, curr_arena.next)
-
-                if curr_arena.address == 0:
-                    print("No arenas could be correctly found.")
-                    break #breaking infinite loop
-
-    def invoke(self, arg, from_tty):
-        try:
-            self.invoke_(arg, from_tty)
-        except Exception:
-            h.show_last_exception()
-
-
-    @hgdb.has_inferior
-    def invoke_(self, arg, from_tty):
-
-        if self.pt.pt_cached_mstate == None and (arg == None or arg == ''):
-            self.pt.logmsg("Neither arena cached nor argument specified")
-            self.help()
-            return
-
-        verbose = 0
-        list_only = False
-        p = None
-        if arg != None:
-            for item in arg.split():
-                if item.find("-v") != -1:
-                    verbose += 1
-                if item.find("-l") != -1:
-                    list_only = True
-                elif item.find("0x") != -1:
-                    p = int(item, 16)
-                elif item.find("$") != -1:
-                    p = self.parse_var(item)
-                elif item.find("-h") != -1:
-                    self.help()
-                    return
-
-        if list_only:
-            self.list_arenas(p)
-            return
-
-        if p == None and self.pt.pt_cached_mstate == None:
-            self.pt.logmsg("WARNING: No address supplied?")
-            self.help()
-            return
-
-        if p != None:
-            p = pt_arena(self.pt, p)
-            self.pt.logmsg("Caching mstate")
-            self.pt.pt_cached_mstate = p
-        else:
-            self.pt.logmsg("Using cached mstate")
-            p = self.pt.pt_cached_mstate
-
-        if verbose == 0:
-            print(p)
-        elif verbose == 1:
-            print(p)
-
-############################################################################
-# XXX - quite slow. Filter by arena or allow that we give it a starting address
-class ptsearch(ptcmd):
-    def __init__(self, pt):
-        super(ptsearch, self).__init__(pt, "ptsearch")
-
-    def help(self):
-        print('[libptmalloc] usage: ptsearch -a <arena> <hex> <min_size> <max_size>')
-
-    def invoke(self, arg, from_tty):
-        try:
-            self.invoke_(arg, from_tty)
-        except Exception:
-            h.show_last_exception()
-
-    def invoke_(self, arg, from_tty):
-        if arg == '':
-            self.help()
-            return
-        arg = arg.split()
-        #if arg[0].find("0x") == -1 or (len(arg[0]) != 10 and len(arg[0]) != 18):
-        #    self.pt.logmsg("you need to provide a word or giant word for hex")
-        #    return
-        search_for = arg[0]
-        if len(arg) > 3:
-            self.help()
-            return
-        if len(arg) >= 2:
-            max_size = int(arg[1], 16)
-        else:
-            max_size = 0
-        if len(arg) == 3:
-            min_size = int(arg[1], 16)
-        else:
-            min_size = 0
-
-        if self.pt.pt_cached_mstate == None:
-            print("ERROR: Cache an arena address using ptarena")
-            return
-        ar_ptr = self.pt.pt_cached_mstate
-        arena_address = ar_ptr.address
-
-        # we skip the main arena as it is in .data
-        ar_ptr = ar_ptr.next
-
-        while ar_ptr != arena_address:
-            self.pt.logmsg("Handling arena @ 0x%x" % pt_arena(self.pt, ar_ptr).address)
-
-            results = self.pt.search_heap(ar_ptr, search_for, min_size,
-                                            max_size)
-
-            if len(results) == 0:
-                print('[libptmalloc] value %s not found' % (search_for))
-                return
-
-            for result in results:
-                self.pt.logmsg("%s found in chunk at 0x%lx" % (search_for, int(result)))
-
-            ar_ptr = pt_arena(self.pt, ar_ptr).next
-
-################################################################################
-class ptbin(ptcmd):
-    "dump the layout of a free bin"
-
-    def __init__(self, pt):
-        super(ptbin, self).__init__(pt, "ptbin")
-
-    def invoke(self, arg, from_tty):
-        "Specify an optional arena addr: ptbin main_arena=0x12345"
-
-        if len(arg) == 0:
-            print_error("Please specify the free bin to dump")
-            return
-
-        try:
-            if arg.find("main_arena") == -1:
-                main_arena = gdb.selected_frame().read_var('main_arena')
-                main_arena_address = main_arena.address
-            else:
-                arg = arg.split()
-                for item in arg:
-                    if item.find("main_arena") != -1:
-                        if len(item) < 12:
-                            print_error("Malformed main_arena parameter")
-                            return
-                        else:
-                            main_arena_address = int(item[11:],16)
-        except RuntimeError:
-            print_error("No frame is currently selected.")
-            return
-        except ValueError:
-            print_error("Debug glibc was not found.")
-            return
-
-        if main_arena_address == 0:
-            print_error("Invalid main_arena address (0)")
-            return
-
-        ar_ptr = pt_arena(self.pt, main_arena_address)
-        hgdb.mutex_lock(ar_ptr)
-
-        print_title("Bin Layout")
-
-        b = self.pt.bin_at(ar_ptr, int(arg))
-        p = pt_chunk(self.pt, self.pt.first(pt_chunk(b, inuse=False)), inuse=False)
-        print_once = True
-        print_str  = ""
-        count      = 0
-
-        while p.address != int(b):
-            if print_once:
-                print_once=False
-                print_str += "-->  "
-                print_str += color_value("[bin {}]".format(int(arg)))
-                count += 1
-
-            print_str += "  <-->  "
-            print_str += color_value("{:#x}".format(int(p.address)))
-            count += 1
-            p = pt_chunk(self.pt, self.pt.first(p), inuse=False)
-
-        if len(print_str) != 0:
-            print_str += "  <--"
-            print(print_str)
-            print("|{}|".format(" " * (len(print_str) - 2 - count*12)))
-            print("{}".format("-" * (len(print_str) - count*12)))
-        else:
-            print("Bin {} empty.".format(int(arg)))
-
-        hgdb.mutex_unlock(ar_ptr)
-
-################################################################################
-def get_arenas(pt):
-    try:
-        arenas = []
-        bin_name = hgdb.get_info()
-        log = logger()
-
-        if pt.pt_cached_mstate == None:
-            log.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
-            return
-        main_arena = pt.pt_cached_mstate.address
-
-        res = gdb.execute("ptarena -l 0x%x" % main_arena, to_string=True)
-        res = res.split("\n")
-        # format is: ['Arena(s) found:', '\t arena @ 0x7ffff4c9b620', '\t arena @ 0x7fffa4000020', ... ]
-        for line in res:
-            result = re.match("\t arena @ (.*)", line)
-            if result:
-                arenas.append(int(result.group(1), 16))
-        arenas.sort()
-        return arenas
-    except Exception as e:
-        h.show_last_exception()  
-
-
-# infile.txt needs to contains something like:
-#0x7fffc03cc650
-#0x7fffb440cae0
-#0x7fffb440c5e0
-# XXX - we could just save all arenas when doing ptarena -l in the first place
-arenas = None
-class ptarenaof(ptcmd):
-
-    def __init__(self, pt):
-        super(ptarenaof, self).__init__(pt, "ptarenaof")
-
-    def help(self):
-        self.logmsg('usage: ptarenaof <addr>|<infile.txt>')
-        self.logmsg(' <addr>  a ptmalloc chunk header')
-        self.logmsg(' <infile.txt> a filename for a file containing one ptmalloc chunk header address per line')
-        return
-    
-    def invoke(self, arg, from_tty):
-        global arenas
-        try:
-            if arg == '' or arg == "-h":
-                self.help()
-                return
-            
-            if self.pt.pt_cached_mstate == None:
-                self.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
-                self.help()
-                return
-        
-            arg = arg.split()
             try:
-                addresses = [int(arg[0], 16)]
+                mp = gdb.selected_frame().read_var('mp_')
+
+                if arg.find("main_arena") == -1:
+                    main_arena = gdb.selected_frame().read_var('main_arena')
+                    main_arena_address = main_arena.address
+                else:
+                    arg = arg.split()
+                    for item in arg:
+                        if item.find("main_arena") != -1:
+                            if len(item) < 12:
+                                print_error("Malformed main_arena parameter")
+                                return
+                            else:
+                                main_arena_address = int(item[11:],16)
+            except RuntimeError:
+                print_error("No frame is currently selected.")
+                return
             except ValueError:
-                self.logmsg("Reading from file: %s" % arg[0])
-                fd = open(arg[0], "r")
-                addresses = [int(l[:-1], 16) for l in fd]
+                print_error("Debug glibc was not found.")
+                return
 
-            if not arenas:
-                self.logmsg("Loading arenas")
-                arenas = get_arenas(self.pt)
-                #self.logmsg("Found arenas: " + "".join(["0x%x, " % a for a in arenas]))
+            if main_arena_address == 0:
+                print_error("Invalid main_arena address (0)")
+                return
 
-            addr_seen = set([])
-            for addr in addresses:
-                ar = addr & 0xffffffffff000000
-                ar += 0x20
-                if ar not in arenas:
-                    #self.logmsg("Warning: arena not found for 0x%x, finding closest candidate" % addr)
-                    # we previously sorted arenas so we can easily find it
-                    bFound = False
-                    for i in range(len(arenas)-1):
-                        if ar >= arenas[i] and ar < arenas[i+1]:
-                            ar = arenas[i]
-                            bFound = True
-                            break
-                    if not bFound:
-                        if ar > arenas[-1]:
-                            ar = arenas[-1]
-                        else:
-                            self.logmsg("Could not find arena for 0x%x, skipping" % addr)
-                            continue
-                if ar not in addr_seen:
-                    #self.logmsg("arena: 0x%x" % ar)
-                    addr_seen.add(ar)
-            if addr_seen:
-                self.logmsg("Seen arenas: " + "".join(["0x%x," % a for a in sorted(list(addr_seen))]))
-        except Exception as e:
-            h.show_last_exception()   
+            mp = pt_save_state(self.pt, mp_address)
+            in_use_b = mp.mmapped_mem
+            system_b = in_use_b
 
+            print_title("Malloc Stats")
 
-################################################################################
-# E.g. usage:
-#(gdb) ptscanchunks 0x7fffb4000020,0x7fffbc000020
-class ptscanchunks(ptcmd):
+            arena = 0
+            ar_ptr = pt_arena(self.pt, main_arena_address)
+            while(1):
+                hgdb.mutex_lock(ar_ptr)
 
-    def __init__(self, pt):
-        super(ptscanchunks, self).__init__(pt, "ptscanchunks")
+                # account for top
+                avail = self.pt.chunksize(pt_chunk(self.pt, self.pt.top(ar_ptr), inuse=True))
+                nblocks = 1
 
-    def help(self):
-        self.logmsg('usage: ptscanchunks [<addr_list>')
-        self.logmsg(' <addr>  comma separated list of arena addresses')
-        return
-    
-    def invoke(self, arg, from_tty):
-        try:
+                nfastblocks = 0
+                fastavail = 0
+
+                # traverse fastbins
+                for i in range(self.pt.NFASTBINS):
+                    p = self.pt.fastbin(ar_ptr, i)
+                    while p!=0:
+                        p = pt_chunk(self.pt, p, inuse=False)
+                        nfastblocks += 1
+                        fastavail += self.pt.chunksize(p)
+                        p = p.fd
+
+                avail += fastavail
+
+                # traverse regular bins
+                for i in range(1, self.pt.NBINS):
+                    b = self.pt.bin_at(ar_ptr, i)
+                    p = pt_chunk(self.pt.first(pt_chunk(self.pt, b,inuse=False)), 
+                            inuse=False)
+
+                    while p.address != int(b):
+                        nblocks += 1
+                        avail += self.pt.chunksize(p)
+                        p = pt_chunk(self.pt, self.pt.first(p), inuse=False)
+
+                print_header("Arena {}:\n".format(arena))
+                print("{:16} = ".format("system bytes"), end='')
+                print_value("{}".format(ar_ptr.max_system_mem), end='\n')
+                print("{:16} = ".format("in use bytes"), end='')
+                print_value("{}".format(ar_ptr.max_system_mem - avail), end='\n')
+
+                system_b += ar_ptr.max_system_mem
+                in_use_b += (ar_ptr.max_system_mem - avail)
+
+                hgdb.mutex_unlock(ar_ptr)
+                if ar_ptr.next == main_arena_address:
+                    break
+                else:
+                    ar_ptr = pt_arena(self.pt, ar_ptr.next)
+                    arena += 1
+
+            print_header("Total (including mmap):\n")
+            print("{:16} = ".format("system bytes"), end='')
+            print_value("{}".format(system_b), end='\n')
+            print("{:16} = ".format("in use bytes"), end='')
+            print_value("{}".format(in_use_b), end='\n')
+            print("{:16} = ".format("max system bytes"), end='')
+            print_value("{}".format(mp['max_total_mem']), end='\n')
+            print("{:16} = ".format("max mmap regions"), end='')
+            print_value("{}".format(mp['max_n_mmaps']), end='\n')
+            print("{:16} = ".format("max mmap bytes"), end='')
+            print_value("{}".format(mp['max_mmapped_mem']), end='\n')
+
+    ################################################################################
+    class ptcallback(ptcmd):
+        "Manage callbacks"
+
+        def __init__(self, pt):
+            super(ptcallback, self).__init__(pt, "ptcallback")
+
+        def help(self):
+            self.pt.logmsg('usage: ptcallback <options>')
+            self.pt.logmsg(' disable         temporarily disable the registered callback')
+            self.pt.logmsg(' enable          enable the registered callback')
+            self.pt.logmsg(' status          check if a callback is registered')
+            self.pt.logmsg(' clear           forget the registered callback')
+            self.pt.logmsg(' register <name> use a global function <name> as callback')
+            self.pt.logmsg(' register <name> <module> use a global function <name> as callback from <module>')
+
+        def invoke(self, arg, from_tty):
             if arg == '':
                 self.help()
                 return
 
-            arg = arg.split(",")
-            if arg[-1] == "":
-                arg = arg[:-1]
+            arg = arg.lower()
+            if arg.find("enable") != -1:
+                self.pt.ptchunk_callback = self.pt.ptchunk_callback_cached
+                self.pt.logmsg('callback enabled')
+                if self.pt.ptchunk_callback == None:
+                    self.pt.logmsg('NOTE: callback was enabled, but is unset')
+            elif arg.find("disable") != -1:
+                self.pt.ptchunk_callback_cached = self.pt.ptchunk_callback
+                self.pt.ptchunk_callback = None
+                self.pt.logmsg('callback disabled')
+            elif arg.find("clear") != -1:
+                self.pt.ptchunk_callback = None
+                self.pt.ptchunk_callback_cached = None
+                self.pt.logmsg('callback cleared')
+            elif arg.find("status") != -1:
+                if self.pt.ptchunk_callback:
+                    self.pt.logmsg('a callback is registered and enabled')
+                elif self.pt.ptchunk_callback == None and \
+                        self.pt.ptchunk_callback_cached:
+                    self.pt.logmsg('a callback is registered and disabled')
+                else:
+                    self.pt.logmsg('a callback is not registered')
+            elif arg.find("register") != -1:
+                args = arg.split(' ')
+                if len(args) < 2:
+                    self.pt.logmsg('[!] Must specify object name')
+                    self.help()
+                    return
+                if args[1] not in globals():
+                    if len(args) == 3:
+                        try:
+                            modpath = os.path.dirname(args[2])
+                            modname = os.path.basename(args[2])
+                            if modpath != "": 
+                                if modpath[0] == '/':
+                                    sys.path.insert(0, modpath)
+                                else:
+                                    sys.path.insert(0, os.path.join(os.getcwd(), 
+                                                modpath))
+                            mod  = importlib.import_module(modname)
+                            importlib.reload(mod)
+                            if args[1] in dir(mod):
+                                self.pt.ptchunk_callback = getattr(mod, args[1])
+                                self.pt.ptchunk_callback_cached = None
+                        except Exception as e:
+                            self.pt.logmsg("[!] Couldn't load module: %s" % args[2])
+                            print(e)
+                    else:
+                        self.pt.logmsg("[!] Couldn't find object %s. Specify module" % 
+                                args[1])
+                        self.help()
+                else:
+                    self.pt.ptchunk_callback = globals()[args[1]]
+                    self.pt.ptchunk_callback_cached = None
+                self.pt.logmsg('%s registered as callback' % args[1])
+            else:
+                self.help()
 
-            for ar in arg:
-                addr = int(ar, 16)
-                # XXX - fix that empirically first chunk is NOT always at 0x8b0
-                addr = addr & 0xffffffffff000000
-                addr += 0x8b0
-                self.logmsg("Scanning 0x%x ..." % addr)
-                res = gdb.execute("ptchunk 0x%x -c 1000000" % addr, to_string=False)
+    ################################################################################
+    class ptchunk(ptcmd):
+        "print a comprehensive view of a ptchunk"
 
+        def __init__(self, pt):
+            super(ptchunk, self).__init__(pt, "ptchunk")
+
+        def help(self):
+            self.pt.logmsg('usage: ptchunk [-v] [-f] [-x] [-p offset] [-c <count>] [-s <val] [--depth <depth>] <addr>')
+            self.pt.logmsg(' -v      use verbose output (multiples for more verbosity)')
+            self.pt.logmsg(' -f      use <addr> explicitly, rather than be smart')
+            self.pt.logmsg(' -x      hexdump the chunk contents')
+            self.pt.logmsg(' -m      max bytes to dump with -x')
+            self.pt.logmsg(' -c      number of chunks to print')
+            self.pt.logmsg(' -s      search pattern when print chunks')
+            self.pt.logmsg(' --depth how far into each chunk to search')
+            self.pt.logmsg(' -d      debug and force printing stuff')
+            self.pt.logmsg(' -n      do not output the trailing newline (summary representation)')
+            self.pt.logmsg(' -p      print data inside at given offset (summary representation)')
+            self.pt.logmsg(' <addr>  a ptmalloc chunk header')
+            self.pt.logmsg('Flag legend: P=PREV_INUSE, M=MMAPPED, N=NON_MAIN_ARENA')
+            return
+
+        def invoke(self, arg, from_tty):
+            try:
+                self.invoke_(arg, from_tty)
+            except Exception:
+                h.show_last_exception()
+
+        @hgdb.has_inferior
+        def invoke_(self, arg, from_tty):
+            "Usage can be obtained via ptchunk -h"
+            if arg == '':
+                self.help()
+                return
+
+            verbose = 0
+            force = False
+            hexdump = False
+            no_newline = False
+            maxbytes = 0
+
+            c_found = False
+            m_found = False
+            s_found = False
+            p_found = False
+            search_val = None
+            search_depth = 0
+            depth_found = False
+            debug = False
+            count_ = 1
+            print_offset = None
+            addresses = []
+            for item in arg.split():
+                if m_found:
+                    if item.find("0x") != -1:
+                        maxbytes = int(item, 16)
+                    else:
+                        maxbytes = int(item)
+                    m_found = False
+                if c_found:
+                    count_ = int(item)
+                    c_found = False
+                elif p_found:
+                    try:
+                        print_offset = int(item)
+                    except ValueError:
+                        print_offset = int(item, 16)
+                    p_found = False
+                elif item.find("-v") != -1:
+                    verbose += 1
+                elif item.find("-f") != -1:
+                    force = True
+                elif item.find("-n") != -1:
+                    no_newline = True
+                elif item.find("-x") != -1:
+                    hexdump = True
+                elif item.find("-m") != -1:
+                    m_found = True
+                elif item.find("-c") != -1:
+                    c_found = True
+                elif item.find("-p") != -1:
+                    p_found = True
+                elif s_found:
+                    if item.find("0x") != -1:
+                        search_val = item
+                    s_found = False
+                elif depth_found:
+                    if item.find("0x") != -1:
+                        search_depth = int(item, 16)
+                    else:
+                        search_depth = int(item)
+                    depth_found = False
+                # XXX Probably make this a helper
+                elif item.find("0x") != -1:
+                    if item.find("-") != -1 or item.find("+") != -1:
+                        addr = self.parse_var(item)
+                    else:
+                        try:
+                            addr = int(item, 16)
+                        except ValueError:
+                            addr = self.parse_var(item)
+                    addresses.append(addr)
+                elif item.find("-s") != -1:
+                    s_found = True
+                elif item.find("--depth") != -1:
+                    depth_found = True 
+
+                elif item.find("$") != -1:
+                    addr = self.parse_var(item)
+                    addresses.append(addr)
+                elif item.find("-d") != -1:
+                    debug = True # This is an undocumented dev option
+                elif item.find("-h") != -1:
+                    self.help()
+                    return
+
+            if not addresses or None in addresses:
+                self.pt.logmsg("WARNING: No address supplied?")
+                self.help()
+                return
+
+            bFirst = True
+            for addr in addresses:
+                if bFirst:
+                    bFirst = False
+                else:
+                    print("-"*60)
+                count = count_
+                p = pt_chunk(self.pt, addr)
+                if p.initOK == False:
+                    return
+                dump_offset = 0
+                while True:
+                    suffix = ""
+                    if search_val != None:
+                        # Don't print if the chunk doesn't have the pattern
+                        if not self.pt.search_chunk(p, search_val, 
+                                depth=search_depth):
+                            suffix += " [NO MATCH]"
+                        else:
+                            suffix += " [MATCH]"
+                    # XXX - the current representation is not really generic as we print the first short
+                    # as an ID and the second 2 bytes as 2 characters. We may want to support passing the
+                    # format string as an argument but this is already useful
+                    if print_offset != None:
+                        mem = hgdb.get_inferior().read_memory(p.data_address + print_offset, 4)
+                        (id_, desc) = struct.unpack_from("<H2s", mem, 0x0)
+                        if h.is_ascii(desc):
+                            suffix += " 0x%04x %s" % (id_, str(desc, encoding="utf-8"))
+                        else:
+                            suffix += " 0x%04x hex(%s)" % (id_, str(binascii.hexlify(desc), encoding="utf-8"))
+
+                    if verbose == 0:
+                        if no_newline:
+                            print(self.pt.chunk_info(p) + suffix, end="")
+                        else:
+                            print(self.pt.chunk_info(p) + suffix)
+                    elif verbose == 1:
+                        print(p)
+                        if self.pt.ptchunk_callback != None:
+                            size = self.pt.chunksize(p) - p.hdr_size
+                            if p.data_address != None:
+                                # We can provide an excess of information and the
+                                # callback can choose what to use
+                                cbinfo = {}
+                                # XXX - Don't know if we need to send all this
+                                cbinfo["caller"] = "ptchunk"
+                                cbinfo["allocator"] = "ptmalloc"
+                                cbinfo["addr"] = p.data_address
+                                cbinfo["hdr_sz"] = p.hdr_size
+                                cbinfo["chunksz"] = self.pt.chunksize(p)
+                                cbinfo["min_hdr_sz"] = self.pt.INUSE_HDR_SZ
+                                cbinfo["data_size"] = size
+                                cbinfo["inuse"] = p.inuse
+                                cbinfo["size_sz"] = self.pt.SIZE_SZ
+                                if debug:
+                                    cbinfo["debug"] = True
+                                    print(cbinfo)
+                                # We expect callback to tell us how much data it
+                                # 'consumed' in printing out info
+                                dump_offset = self.pt.ptchunk_callback(cbinfo)
+                            # mem-based callbacks not yet supported
+                    if hexdump:
+                        self.pt.print_hexdump(p, maxbytes, dump_offset)
+                    count -= 1
+                    if count != 0:
+                        if verbose == 1 or hexdump:
+                            print('--')
+                        p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
+                        if p.initOK == False:
+                            break
+                    else:
+                        break
+
+    ################################################################################
+    class ptarena(ptcmd):
+        "print a comprehensive view of an mstate which is representing an arena"
+
+        def __init__(self, pt):
+            super(ptarena, self).__init__(pt, "ptarena")
+
+        def help(self):
+            self.pt.logmsg('usage: ptarena [-v] [-f] [-x] [-c <count>] <addr>')
+            self.pt.logmsg(' <addr> a ptmalloc mstate struct. Optional with cached mstate')
+            self.pt.logmsg(' -v     use verbose output (multiples for more verbosity)')
+            self.pt.logmsg(' -l     list arenas only')
+            self.pt.logmsg(' NOTE: Last defined mstate will be cached for future use')
+            return
+
+        @hgdb.has_inferior
+        def list_arenas(self, arena_address=None):
+            if arena_address == None:
+                if self.pt.pt_cached_mstate == None:
+                    self.pt.logmsg("WARNING: No cached arena")
+
+                    try:
+                        main_arena = gdb.selected_frame().read_var('main_arena')
+                        arena_address = main_arena.address
+                    except RuntimeError:
+                        self.pt.logmsg("No gdb frame is currently selected.")
+                        return
+                    except ValueError:
+                        try:
+                            res = gdb.execute('x/x &main_arena', to_string=True)
+                            arena_address = int(res.strip().split()[0], 16)
+                        except gdb.error:
+                            self.pt.logmsg("WARNING: Debug glibc was not found.")
+                            return
+
+                            # XXX - we don't support that yet 
+
+                            self.pt.logmsg("Guessing main_arena address via offset from libc.")
+
+                            #find heap by offset from end of libc in /proc
+                            # XXX - need to test this inferior call
+                            libc_end,heap_begin = read_proc_maps(inferior.pid)
+
+                            if self.pt.SIZE_SZ == 4:
+                                #__malloc_initialize_hook + 0x20
+                                #offset seems to be +0x380 on debug glibc,
+                                #+0x3a0 otherwise
+                                arena_address = libc_end + 0x3a0
+                            elif self.pt.SIZE_SZ == 8:
+                                #offset seems to be +0xe80 on debug glibc,
+                                #+0xea0 otherwise
+                                self.pt.arena_address = libc_end + 0xea0
+
+                            if libc_end == -1:
+                                self.pt.logmsg("Invalid address read via /proc")
+                                return
+
+                else:
+                    self.pt.logmsg("Using cached mstate")
+                    ar_ptr = self.pt.pt_cached_mstate
+            else:    
+                if arena_address == 0 or arena_address == None:
+                    self.pt.logmsg("Invalid arena address (0)")
+                    return
+                ar_ptr = pt_arena(self.pt, arena_address)
+
+            if ar_ptr.next == 0:
+                self.pt.logmsg("No arenas could be correctly guessed.")
+                self.pt.logmsg("Nothing was found at {0:#x}".format(ar_ptr.address))
+                return
+
+            print("Arena(s) found:")
+            try:
+                #arena address obtained via read_var
+                print("\t arena @ {:#x}".format(
+                        int(ar_ptr.address.cast(gdb.lookup_type("unsigned long")))))
+            except Exception:
+                #arena address obtained via -a
+                print("\t arena @ {:#x}".format(int(ar_ptr.address)))
+
+            if ar_ptr.address != ar_ptr.next:
+                #we have more than one arena
+
+                curr_arena = pt_arena(self.pt, ar_ptr.next)
+                while (ar_ptr.address != curr_arena.address):
+                    print("\t arena @ {:#x}".format(int(curr_arena.address)))
+                    curr_arena = pt_arena(self.pt, curr_arena.next)
+
+                    if curr_arena.address == 0:
+                        print("No arenas could be correctly found.")
+                        break #breaking infinite loop
+
+        def invoke(self, arg, from_tty):
+            try:
+                self.invoke_(arg, from_tty)
+            except Exception:
+                h.show_last_exception()
+
+
+        @hgdb.has_inferior
+        def invoke_(self, arg, from_tty):
+
+            if self.pt.pt_cached_mstate == None and (arg == None or arg == ''):
+                self.pt.logmsg("Neither arena cached nor argument specified")
+                self.help()
+                return
+
+            verbose = 0
+            list_only = False
+            p = None
+            if arg != None:
+                for item in arg.split():
+                    if item.find("-v") != -1:
+                        verbose += 1
+                    if item.find("-l") != -1:
+                        list_only = True
+                    elif item.find("0x") != -1:
+                        p = int(item, 16)
+                    elif item.find("$") != -1:
+                        p = self.parse_var(item)
+                    elif item.find("-h") != -1:
+                        self.help()
+                        return
+
+            if list_only:
+                self.list_arenas(p)
+                return
+
+            if p == None and self.pt.pt_cached_mstate == None:
+                self.pt.logmsg("WARNING: No address supplied?")
+                self.help()
+                return
+
+            if p != None:
+                p = pt_arena(self.pt, p)
+                self.pt.logmsg("Caching mstate")
+                self.pt.pt_cached_mstate = p
+            else:
+                self.pt.logmsg("Using cached mstate")
+                p = self.pt.pt_cached_mstate
+
+            if verbose == 0:
+                print(p)
+            elif verbose == 1:
+                print(p)
+
+    ############################################################################
+    # XXX - quite slow. Filter by arena or allow that we give it a starting address
+    class ptsearch(ptcmd):
+        def __init__(self, pt):
+            super(ptsearch, self).__init__(pt, "ptsearch")
+
+        def help(self):
+            print('[libptmalloc] usage: ptsearch -a <arena> <hex> <min_size> <max_size>')
+
+        def invoke(self, arg, from_tty):
+            try:
+                self.invoke_(arg, from_tty)
+            except Exception:
+                h.show_last_exception()
+
+        def invoke_(self, arg, from_tty):
+            if arg == '':
+                self.help()
+                return
+            arg = arg.split()
+            #if arg[0].find("0x") == -1 or (len(arg[0]) != 10 and len(arg[0]) != 18):
+            #    self.pt.logmsg("you need to provide a word or giant word for hex")
+            #    return
+            search_for = arg[0]
+            if len(arg) > 3:
+                self.help()
+                return
+            if len(arg) >= 2:
+                max_size = int(arg[1], 16)
+            else:
+                max_size = 0
+            if len(arg) == 3:
+                min_size = int(arg[1], 16)
+            else:
+                min_size = 0
+
+            if self.pt.pt_cached_mstate == None:
+                print("ERROR: Cache an arena address using ptarena")
+                return
+            ar_ptr = self.pt.pt_cached_mstate
+            arena_address = ar_ptr.address
+
+            # we skip the main arena as it is in .data
+            ar_ptr = ar_ptr.next
+
+            while ar_ptr != arena_address:
+                self.pt.logmsg("Handling arena @ 0x%x" % pt_arena(self.pt, ar_ptr).address)
+
+                results = self.pt.search_heap(ar_ptr, search_for, min_size,
+                                                max_size)
+
+                if len(results) == 0:
+                    print('[libptmalloc] value %s not found' % (search_for))
+                    return
+
+                for result in results:
+                    self.pt.logmsg("%s found in chunk at 0x%lx" % (search_for, int(result)))
+
+                ar_ptr = pt_arena(self.pt, ar_ptr).next
+
+    ################################################################################
+    class ptbin(ptcmd):
+        "dump the layout of a free bin"
+
+        def __init__(self, pt):
+            super(ptbin, self).__init__(pt, "ptbin")
+
+        def invoke(self, arg, from_tty):
+            "Specify an optional arena addr: ptbin main_arena=0x12345"
+
+            if len(arg) == 0:
+                print_error("Please specify the free bin to dump")
+                return
+
+            try:
+                if arg.find("main_arena") == -1:
+                    main_arena = gdb.selected_frame().read_var('main_arena')
+                    main_arena_address = main_arena.address
+                else:
+                    arg = arg.split()
+                    for item in arg:
+                        if item.find("main_arena") != -1:
+                            if len(item) < 12:
+                                print_error("Malformed main_arena parameter")
+                                return
+                            else:
+                                main_arena_address = int(item[11:],16)
+            except RuntimeError:
+                print_error("No frame is currently selected.")
+                return
+            except ValueError:
+                print_error("Debug glibc was not found.")
+                return
+
+            if main_arena_address == 0:
+                print_error("Invalid main_arena address (0)")
+                return
+
+            ar_ptr = pt_arena(self.pt, main_arena_address)
+            hgdb.mutex_lock(ar_ptr)
+
+            print_title("Bin Layout")
+
+            b = self.pt.bin_at(ar_ptr, int(arg))
+            p = pt_chunk(self.pt, self.pt.first(pt_chunk(b, inuse=False)), inuse=False)
+            print_once = True
+            print_str  = ""
+            count      = 0
+
+            while p.address != int(b):
+                if print_once:
+                    print_once=False
+                    print_str += "-->  "
+                    print_str += color_value("[bin {}]".format(int(arg)))
+                    count += 1
+
+                print_str += "  <-->  "
+                print_str += color_value("{:#x}".format(int(p.address)))
+                count += 1
+                p = pt_chunk(self.pt, self.pt.first(p), inuse=False)
+
+            if len(print_str) != 0:
+                print_str += "  <--"
+                print(print_str)
+                print("|{}|".format(" " * (len(print_str) - 2 - count*12)))
+                print("{}".format("-" * (len(print_str) - count*12)))
+            else:
+                print("Bin {} empty.".format(int(arg)))
+
+            hgdb.mutex_unlock(ar_ptr)
+
+    ################################################################################
+    def get_arenas(pt):
+        try:
+            arenas = []
+            bin_name = hgdb.get_info()
+            log = logger()
+
+            if pt.pt_cached_mstate == None:
+                log.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
+                return
+            main_arena = pt.pt_cached_mstate.address
+
+            res = gdb.execute("ptarena -l 0x%x" % main_arena, to_string=True)
+            res = res.split("\n")
+            # format is: ['Arena(s) found:', '\t arena @ 0x7ffff4c9b620', '\t arena @ 0x7fffa4000020', ... ]
+            for line in res:
+                result = re.match("\t arena @ (.*)", line)
+                if result:
+                    arenas.append(int(result.group(1), 16))
+            arenas.sort()
+            return arenas
         except Exception as e:
-            h.show_last_exception()
+            h.show_last_exception()  
 
-################################################################################
-class pthelp(ptcmd):
-    "Details about all libptmalloc gdb commands"
 
-    def __init__(self, pt, help_extra=None):
-        self.help_extra = help_extra
-        super(pthelp, self).__init__(pt, "pthelp")
+    # infile.txt needs to contains something like:
+    #0x7fffc03cc650
+    #0x7fffb440cae0
+    #0x7fffb440c5e0
+    # XXX - we could just save all arenas when doing ptarena -l in the first place
+    arenas = None
+    class ptarenaof(ptcmd):
 
-    def invoke(self, arg, from_tty):
-        self.pt.logmsg('ptmalloc commands for gdb')
-        if self.help_extra != None:
-            self.pt.logmsg(self.help_extra)
-        self.pt.logmsg('ptchunk      : show chunk contents (-v for verbose, -x for data dump)')
-        self.pt.logmsg('ptsearch     : search heap for hex value or address')
-        self.pt.logmsg('ptarena      : print mstate struct. caches address after first use')
-        self.pt.logmsg('ptcallback   : print mstate struct. caches address after first use')
-        self.pt.logmsg('ptarenaof    : print arena for a given chunk or a list of chunks')
-        self.pt.logmsg('ptscanchunks : print all chunks for all provided arenas')
-        self.pt.logmsg('pthelp     : this help message')
-        self.pt.logmsg('NOTE: Pass -h to any of these commands for more extensive usage. Eg: ptchunk -h')
+        def __init__(self, pt):
+            super(ptarenaof, self).__init__(pt, "ptarenaof")
+
+        def help(self):
+            self.logmsg('usage: ptarenaof <addr>|<infile.txt>')
+            self.logmsg(' <addr>  a ptmalloc chunk header')
+            self.logmsg(' <infile.txt> a filename for a file containing one ptmalloc chunk header address per line')
+            return
+        
+        def invoke(self, arg, from_tty):
+            global arenas
+            try:
+                if arg == '' or arg == "-h":
+                    self.help()
+                    return
+                
+                if self.pt.pt_cached_mstate == None:
+                    self.logmsg("WARNING: Need cached main_arena. Use ptarena first.")
+                    self.help()
+                    return
+            
+                arg = arg.split()
+                try:
+                    addresses = [int(arg[0], 16)]
+                except ValueError:
+                    self.logmsg("Reading from file: %s" % arg[0])
+                    fd = open(arg[0], "r")
+                    addresses = [int(l[:-1], 16) for l in fd]
+
+                if not arenas:
+                    self.logmsg("Loading arenas")
+                    arenas = get_arenas(self.pt)
+                    #self.logmsg("Found arenas: " + "".join(["0x%x, " % a for a in arenas]))
+
+                addr_seen = set([])
+                for addr in addresses:
+                    ar = addr & 0xffffffffff000000
+                    ar += 0x20
+                    if ar not in arenas:
+                        #self.logmsg("Warning: arena not found for 0x%x, finding closest candidate" % addr)
+                        # we previously sorted arenas so we can easily find it
+                        bFound = False
+                        for i in range(len(arenas)-1):
+                            if ar >= arenas[i] and ar < arenas[i+1]:
+                                ar = arenas[i]
+                                bFound = True
+                                break
+                        if not bFound:
+                            if ar > arenas[-1]:
+                                ar = arenas[-1]
+                            else:
+                                self.logmsg("Could not find arena for 0x%x, skipping" % addr)
+                                continue
+                    if ar not in addr_seen:
+                        #self.logmsg("arena: 0x%x" % ar)
+                        addr_seen.add(ar)
+                if addr_seen:
+                    self.logmsg("Seen arenas: " + "".join(["0x%x," % a for a in sorted(list(addr_seen))]))
+            except Exception as e:
+                h.show_last_exception()   
+
+
+    ################################################################################
+    # E.g. usage:
+    #(gdb) ptscanchunks 0x7fffb4000020,0x7fffbc000020
+    class ptscanchunks(ptcmd):
+
+        def __init__(self, pt):
+            super(ptscanchunks, self).__init__(pt, "ptscanchunks")
+
+        def help(self):
+            self.logmsg('usage: ptscanchunks [<addr_list>')
+            self.logmsg(' <addr>  comma separated list of arena addresses')
+            return
+        
+        def invoke(self, arg, from_tty):
+            try:
+                if arg == '':
+                    self.help()
+                    return
+
+                arg = arg.split(",")
+                if arg[-1] == "":
+                    arg = arg[:-1]
+
+                for ar in arg:
+                    addr = int(ar, 16)
+                    # XXX - fix that empirically first chunk is NOT always at 0x8b0
+                    addr = addr & 0xffffffffff000000
+                    addr += 0x8b0
+                    self.logmsg("Scanning 0x%x ..." % addr)
+                    res = gdb.execute("ptchunk 0x%x -c 1000000" % addr, to_string=False)
+
+            except Exception as e:
+                h.show_last_exception()
+
+    ################################################################################
+    class pthelp(ptcmd):
+        "Details about all libptmalloc gdb commands"
+
+        def __init__(self, pt, help_extra=None):
+            self.help_extra = help_extra
+            super(pthelp, self).__init__(pt, "pthelp")
+
+        def invoke(self, arg, from_tty):
+            self.pt.logmsg('ptmalloc commands for gdb')
+            if self.help_extra != None:
+                self.pt.logmsg(self.help_extra)
+            self.pt.logmsg('ptchunk      : show chunk contents (-v for verbose, -x for data dump)')
+            self.pt.logmsg('ptsearch     : search heap for hex value or address')
+            self.pt.logmsg('ptarena      : print mstate struct. caches address after first use')
+            self.pt.logmsg('ptcallback   : print mstate struct. caches address after first use')
+            self.pt.logmsg('ptarenaof    : print arena for a given chunk or a list of chunks')
+            self.pt.logmsg('ptscanchunks : print all chunks for all provided arenas')
+            self.pt.logmsg('pthelp     : this help message')
+            self.pt.logmsg('NOTE: Pass -h to any of these commands for more extensive usage. Eg: ptchunk -h')
 
 if __name__ == "__main__":
-    pth = pt_helper()
 
+    pth = pt_helper()
     pthelp(pth)
     ptcallback(pth)
     ptchunk(pth)
@@ -2463,4 +2512,5 @@ if __name__ == "__main__":
     ptbin(pth)
     ptarenaof(pth)
     ptscanchunks(pth)
+
     pth.logmsg("loaded")
