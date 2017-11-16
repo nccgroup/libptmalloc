@@ -2,9 +2,11 @@ from printutils import *
 
 try:
     import gdb
+    is_gdb = True
 except ImportError:
-    print("Not running inside of GDB, exiting...")
-    exit()
+    print("Not running inside of GDB, limited functionality")
+    is_gdb = False
+    pass
 
 class malloc_par_printer:
     "pretty printer for the malloc_par struct (mp_)"
@@ -117,6 +119,9 @@ def pretty_print_heap_lookup(val):
 
     val_type = val.type
 
+    if not is_gdb:
+        return None
+
     # If it points to a reference, get the reference.
     if val_type.code == gdb.TYPE_CODE_REF:
         val_type = val_type.target()
@@ -142,4 +147,5 @@ def pretty_print_heap_lookup(val):
     # Cannot find a pretty printer for type(val)
     return None
 
-gdb.pretty_printers.append(pretty_print_heap_lookup)
+if is_gdb:
+    gdb.pretty_printers.append(pretty_print_heap_lookup)

@@ -42,8 +42,8 @@ except ImportError:
     pass
 
 #try:
-#    from printutils import *
-#    from prettyprinters import *
+from printutils import *
+from prettyprinters import *
 #except Exception:
 #    # XXX - find a way to actually import the ones from libptmalloc in case 
 #    # we modify these files
@@ -471,7 +471,7 @@ class pt_helper():
         gdb.execute(cmd, True)
         return
 
-    def chunk_info(self, p):
+    def chunk_info(self, p, inuse_override=None):
         info = []
         info.append("0x%lx " % p.address)
         if p.fastchunk_freed == True:
@@ -536,7 +536,11 @@ class pt_helper():
                 cbinfo["chunksz"] = self.chunksize(p)
                 cbinfo["min_hdr_sz"] = self.INUSE_HDR_SZ
                 cbinfo["data_size"] = size
+                # Sometimes we want to show free_pc even when a chunk is
+                # in-use, like if we hook free to trace it
                 cbinfo["inuse"] = p.inuse
+                if inuse_override != None:
+                    cbinfo["inuse_override"] = inuse_override
                 cbinfo["no_print"] = True
                 cbinfo["chunk_info"] = True
                 cbinfo["size_sz"] = self.SIZE_SZ
