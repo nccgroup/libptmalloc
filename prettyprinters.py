@@ -4,9 +4,8 @@ try:
     import gdb
     is_gdb = True
 except ImportError:
-    print("Not running inside of GDB, limited functionality")
+    print("[prettyprinters] Not running inside of GDB, limited functionality")
     is_gdb = False
-    pass
 
 class malloc_par_printer:
     "pretty printer for the malloc_par struct (mp_)"

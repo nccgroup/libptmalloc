@@ -38,8 +38,7 @@ try:
 
 except ImportError:
     is_gdb = False
-    print("Not running inside of GDB, limited functionality...")
-    pass
+    print("[libptmalloc] Not running inside of GDB, limited functionality")
 
 #try:
 from printutils import *
