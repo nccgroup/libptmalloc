@@ -24,6 +24,7 @@ from __future__ import print_function
 import binascii
 import importlib
 import os
+import re
 import struct
 import sys
 import traceback
@@ -70,9 +71,9 @@ class logger:
             print(s)
 
 
-################################################################################
+###############################################################################
 # HELPERS
-################################################################################
+###############################################################################
 
 
 def gdb_backtrace(f):
@@ -100,7 +101,7 @@ def read_proc_maps(pid):
         print_error("Unable to open {0}".format(filename))
         return -1, -1
 
-    found = libc_begin = libc_end = heap_begin = heap_end = 0
+    libc_begin = libc_end = heap_begin = heap_end = 0
     for line in fd:
         if line.find("libc-") != -1:
             fields = line.split()
@@ -205,10 +206,10 @@ class pt_helper:
             raise Exception("Retrieving the SIZE_SZ failed.")
 
     # This can be initialized to register a callback that will dump additional
-    # embedded information while analyzing a ptmalloc chunk. An example (and why
-    # this was written) is the Cisco ASA mh header.
-    # XXX - Would be nice if the callback implemented a test call to see that we
-    # can actually run it before we say it's there. :)
+    # embedded information while analyzing a ptmalloc chunk. An example (and
+    # why this was written) is the Cisco ASA mh header.
+    # XXX - Would be nice if the callback implemented a test call to see that
+    # we can actually run it before we say it's there. :)
     def register_callback(self, func):
         self.ptchunk_callback = func
         self.logmsg("Registered new ptchunk callback")
@@ -489,7 +490,7 @@ class pt_helper:
     def chunk_info(self, p, inuse_override=None):
         info = []
         info.append("0x%lx " % p.address)
-        if p.fastchunk_freed == True:
+        if p.fastchunk_freed is True:
             info.append("f ")
         elif self.inuse(p):
             info.append("M ")
@@ -1066,7 +1067,7 @@ class pt_chunk(pt_structure):
         else:
             self.from_mem = True
             # a string of raw memory was provided
-            if self.inuse == True:
+            if self.inuse is True:
                 if len(mem) < self.pt.INUSE_HDR_SZ:
                     self.pt.logmsg("Insufficient memory provided for a malloc_chunk.")
                     self.initOK = False
@@ -1134,7 +1135,7 @@ class pt_chunk(pt_structure):
 
         # now that we know the size and if it is inuse/freed, we can determine
         # the chunk type and though the chunk header size
-        if self.inuse == True:
+        if self.inuse is True:
             self.hdr_size = self.pt.INUSE_HDR_SZ
         else:
             if size is None:
@@ -2105,7 +2106,7 @@ if is_gdb:
                     print("-" * 60)
                 count = count_
                 p = pt_chunk(self.pt, addr)
-                if p.initOK == False:
+                if p.initOK is False:
                     return
                 dump_offset = 0
                 while True:
@@ -2169,14 +2170,14 @@ if is_gdb:
                         if verbose == 1 or hexdump:
                             print("--")
                         p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
-                        if p.initOK == False:
+                        if p.initOK is False:
                             break
                     else:
                         break
 
-    ################################################################################
+    ###########################################################################
     class ptarena(ptcmd):
-        "print a comprehensive view of an mstate which is representing an arena"
+        "print a comprehensive view of mstate the representing an arena"
 
         def __init__(self, pt):
             super(ptarena, self).__init__(pt, "ptarena")
@@ -2326,8 +2327,9 @@ if is_gdb:
             elif verbose == 1:
                 print(p)
 
-    ############################################################################
-    # XXX - quite slow. Filter by arena or allow that we give it a starting address
+    ###########################################################################
+    # XXX - quite slow. Filter by arena or allow that we give it a starting
+    # address
     class ptsearch(ptcmd):
         def __init__(self, pt):
             super(ptsearch, self).__init__(pt, "ptsearch")
@@ -2391,7 +2393,7 @@ if is_gdb:
 
                 ar_ptr = pt_arena(self.pt, ar_ptr).next
 
-    ################################################################################
+    ###########################################################################
     class ptbin(ptcmd):
         "dump the layout of a free bin"
 
@@ -2462,7 +2464,7 @@ if is_gdb:
 
             hgdb.mutex_unlock(ar_ptr)
 
-    ################################################################################
+    ###########################################################################
     def get_arenas(pt):
         try:
             arenas = []
@@ -2490,7 +2492,8 @@ if is_gdb:
     # 0x7fffc03cc650
     # 0x7fffb440cae0
     # 0x7fffb440c5e0
-    # XXX - we could just save all arenas when doing ptarena -l in the first place
+    # XXX - we could just save all arenas when doing ptarena -l in the first
+    # place
     arenas = None
 
     class ptarenaof(ptcmd):
@@ -2559,10 +2562,10 @@ if is_gdb:
                         "Seen arenas: "
                         + "".join(["0x%x," % a for a in sorted(list(addr_seen))])
                     )
-            except Exception as e:
+            except Exception:
                 h.show_last_exception()
 
-    ################################################################################
+    ###########################################################################
     # E.g. usage:
     # (gdb) ptscanchunks 0x7fffb4000020,0x7fffbc000020
     class ptscanchunks(ptcmd):
@@ -2595,7 +2598,7 @@ if is_gdb:
             except Exception as e:
                 h.show_last_exception()
 
-    ################################################################################
+    ###########################################################################
     class pthelp(ptcmd):
         "Details about all libptmalloc gdb commands"
 
