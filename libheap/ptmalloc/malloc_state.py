@@ -1,9 +1,7 @@
-import sys
 import struct
+import sys
 
-from libheap.frontend.printutils import color_title
-from libheap.frontend.printutils import color_value
-from libheap.frontend.printutils import print_error
+from libheap.frontend.printutils import color_title, color_value, print_error
 
 
 class malloc_state:
@@ -13,6 +11,7 @@ class malloc_state:
         self.size = 0
         self.mutex = 0
         self.flags = 0
+        # self.have_fastchunks = 0
         self.fastbinsY = 0
         self.top = 0
         self.last_remainder = 0
@@ -62,6 +61,12 @@ class malloc_state:
                     self.size = 0x454
                 elif self.size_sz == 8:
                     self.size = 0x890
+            elif self.version >= 2.27:
+                # ha e_fastchunks added in 2.27
+                if self.size_sz == 4:
+                    self.size = 0x458
+                elif self.size_sz == 8:
+                    self.size = 0x898
 
             try:
                 self.mem = self.dbg.read_memory(addr, self.size)
@@ -85,20 +90,29 @@ class malloc_state:
 
         self.mutex = self.unpack_variable("<I", 0)
         self.flags = self.unpack_variable("<I", 4)
+        offset = 8
+        if self.version >= 2.23:
+            if self.size_sz == 4:
+                fmt = "<I"
+            elif self.size_sz == 8:
+                fmt = "<Q"
+            # this is padded on 64-bit despite being int
+            self.have_fastchunks = self.unpack_variable(fmt, offset)
+            offset = offset + self.size_sz
 
         if self.size_sz == 4:
             fmt = "<10I"
         elif self.size_sz == 8:
             fmt = "<10Q"
-        self.fastbinsY = struct.unpack_from(fmt, self.mem, 8)
+        self.fastbinsY = struct.unpack_from(fmt, self.mem, offset)
+        offset = offset + 10 * self.size_sz
 
         if self.size_sz == 4:
             fmt = "<I"
         elif self.size_sz == 8:
             fmt = "<Q"
-        offset = 8 + (10 * self.size_sz)
         self.top = self.unpack_variable(fmt, offset)
-        offset = offset + self.size_sz
+        offset += self.size_sz
         self.last_remainder = self.unpack_variable(fmt, offset)
 
         if self.size_sz == 4:
@@ -135,15 +149,33 @@ class malloc_state:
     def write(self, inferior=None):
         # XXX: fixme for new format
         if self.size_sz == 4:
-            mem = struct.pack("<275I", self.mutex, self.flags, self.fastbinsY,
-                              self.top, self.last_remainder, self.bins,
-                              self.binmap, self.next, self.system_mem,
-                              self.max_system_mem)
+            mem = struct.pack(
+                "<275I",
+                self.mutex,
+                self.flags,
+                self.fastbinsY,
+                self.top,
+                self.last_remainder,
+                self.bins,
+                self.binmap,
+                self.next,
+                self.system_mem,
+                self.max_system_mem,
+            )
         elif self.size_sz == 8:
-            mem = struct.pack("<II266QIIIIQQQ", self.mutex, self.flags,
-                              self.fastbinsY, self.top, self.last_remainder,
-                              self.bins, self.binmap, self.next,
-                              self.system_mem, self.max_system_mem)
+            mem = struct.pack(
+                "<II266QIIIIQQQ",
+                self.mutex,
+                self.flags,
+                self.fastbinsY,
+                self.top,
+                self.last_remainder,
+                self.bins,
+                self.binmap,
+                self.next,
+                self.system_mem,
+                self.max_system_mem,
+            )
 
         if self.dbg is not None:
             self.dbg.write_memory(self.address, mem)
