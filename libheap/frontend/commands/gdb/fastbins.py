@@ -1,7 +1,12 @@
 from __future__ import print_function
 
-import sys
 import struct
+import sys
+
+from libheap.frontend.printutils import print_error, print_title, print_value
+from libheap.ptmalloc.malloc_chunk import malloc_chunk
+from libheap.ptmalloc.malloc_state import malloc_state
+from libheap.ptmalloc.ptmalloc import ptmalloc
 
 try:
     import gdb
@@ -9,22 +14,17 @@ except ImportError:
     print("Not running inside of GDB, exiting...")
     sys.exit()
 
-from libheap.frontend.printutils import print_title
-from libheap.frontend.printutils import print_error
-from libheap.frontend.printutils import print_value
 
-from libheap.ptmalloc.ptmalloc import ptmalloc
 
-from libheap.ptmalloc.malloc_state import malloc_state
-from libheap.ptmalloc.malloc_chunk import malloc_chunk
 
 
 class fastbins(gdb.Command):
     """Walk and print the fast bins."""
 
     def __init__(self, debugger=None, version=None):
-        super(fastbins, self).__init__("fastbins", gdb.COMMAND_OBSCURE,
-                                       gdb.COMPLETE_NONE)
+        super(fastbins, self).__init__(
+            "fastbins", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE
+        )
 
         if debugger is not None:
             self.dbg = debugger
@@ -45,9 +45,7 @@ class fastbins(gdb.Command):
         elif ptm.SIZE_SZ == 8:
             pad_width = 29
 
-        # XXX: from old heap command, replace
-        main_arena = self.dbg.read_variable("main_arena")
-        arena_address = self.dbg.format_address(main_arena.address)
+        arena_address = self.dbg.read_variable_address("main_arena")
         thread_arena = self.dbg.read_variable("thread_arena")
         if thread_arena is not None:
             thread_arena_address = self.dbg.format_address(thread_arena)
@@ -58,18 +56,15 @@ class fastbins(gdb.Command):
         if len(argv) == 1:
             arena_address = int(argv[0], 16)
         elif len(argv):
-            print_error('Too many arguments')
+            print_error("Too many arguments")
             return
         else:
             arena_address = thread_arena_address
 
-        ar_ptr = malloc_state(arena_address, debugger=self.dbg,
-                              version=self.version)
+        ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
 
-        # 8 bytes into struct malloc_state on both 32/64bit
         # XXX: fixme for glibc <= 2.19 with THREAD_STATS
-        fastbinsY = int(ar_ptr.address) + 8
-        fb_base = fastbinsY
+        fb_base = int(ar_ptr.address) + ar_ptr.fastbins_offset
 
         print_title("fastbins", end="")
 
@@ -94,7 +89,7 @@ class fastbins(gdb.Command):
                 print_value("[ {:#x} ] ".format(fd))
 
             if fd != 0:  # fastbin is not empty
-                fb_size = ((ptm.MIN_CHUNK_SIZE) + (ptm.MALLOC_ALIGNMENT) * fb)
+                fb_size = (ptm.MIN_CHUNK_SIZE) + (ptm.MALLOC_ALIGNMENT) * fb
                 print("({})".format(int(fb_size)), end="")
 
                 chunk = malloc_chunk(fd, inuse=False, debugger=self.dbg)
@@ -103,11 +98,13 @@ class fastbins(gdb.Command):
                         # could not read memory section
                         break
 
-                    print_value("\n{:>{width}} {:#x} {} ".format("[",
-                                chunk.fd, "]", width=pad_width))
+                    print_value(
+                        "\n{:>{width}} {:#x} {} ".format(
+                            "[", chunk.fd, "]", width=pad_width
+                        )
+                    )
                     print("({})".format(fb_size), end="")
 
-                    chunk = malloc_chunk(chunk.fd, inuse=False,
-                                         debugger=self.dbg)
+                    chunk = malloc_chunk(chunk.fd, inuse=False, debugger=self.dbg)
 
         print("")

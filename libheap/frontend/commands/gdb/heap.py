@@ -54,20 +54,10 @@ class heap(gdb.Command):
         if ptm.SIZE_SZ == 0:
             ptm.set_globals()
 
-        try:
-            main_arena = self.dbg.read_variable("main_arena")
-            arena_address = main_arena.address
-        except RuntimeError:
-            print("No gdb frame is currently selected.")
+        arena_address = self.dbg.read_variable_address("main_arena")
+        if arena_address is None:
+            print_error("main_arena address could not be found")
             return
-        except (AttributeError, ValueError):
-            try:
-                res = gdb.execute("x/x &main_arena", to_string=True)
-                arena_address = int(res.strip().split()[0], 16)
-            except gdb.error:
-                print("WARNING: Debug glibc was not found.")
-                return
-
         ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
 
         # XXX: add arena address passing via arg (-a)

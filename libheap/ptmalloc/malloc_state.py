@@ -23,6 +23,9 @@ class malloc_state:
         self.system_mem = 0
         self.max_system_mem = 0
 
+        self.fastbins_offset = 0
+        self.bins_offset = 0
+
         if addr is None:
             if mem is None:
                 print_error("Please specify a struct malloc_state address.")
@@ -55,18 +58,28 @@ class malloc_state:
                 elif self.size_sz == 8:
                     # sizeof(malloc_state) = 4+4+80+8+8+(254*8)+16+8+8+8+8
                     self.size = 0x888
+
+                self.fastbins_offset = 8
+                self.bins_offset = self.fastbins_offset + 12 * self.size_sz
             elif self.version >= 2.23 and self.version <= 2.25:
                 # attached_threads added in 2.23
                 if self.size_sz == 4:
                     self.size = 0x454
                 elif self.size_sz == 8:
                     self.size = 0x890
+
+                self.fastbins_offset = 8
+                self.bins_offset = self.fastbins_offset + 12 * self.size_sz
             elif self.version >= 2.27:
-                # ha e_fastchunks added in 2.27
+                # have_fastchunks added in 2.27
                 if self.size_sz == 4:
                     self.size = 0x458
+                    self.fastbins_offset = 0xC
                 elif self.size_sz == 8:
                     self.size = 0x898
+                    self.fastbins_offset = 0x10
+
+                self.bins_offset = self.fastbins_offset + 12 * self.size_sz
 
             try:
                 self.mem = self.dbg.read_memory(addr, self.size)
@@ -113,13 +126,14 @@ class malloc_state:
             fmt = "<Q"
         self.top = self.unpack_variable(fmt, offset)
         offset += self.size_sz
+
         self.last_remainder = self.unpack_variable(fmt, offset)
+        offset = offset + self.size_sz
 
         if self.size_sz == 4:
             fmt = "<254I"
         elif self.size_sz == 8:
             fmt = "<254Q"
-        offset = offset + self.size_sz
         self.bins = struct.unpack_from(fmt, self.mem, offset)
 
         offset = offset + (254 * self.size_sz)

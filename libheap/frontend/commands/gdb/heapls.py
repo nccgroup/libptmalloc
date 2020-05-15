@@ -2,29 +2,24 @@ from __future__ import print_function
 
 import sys
 
+from libheap.frontend.printutils import print_error, print_title, print_value
+from libheap.ptmalloc.malloc_chunk import malloc_chunk
+from libheap.ptmalloc.malloc_par import malloc_par
+from libheap.ptmalloc.malloc_state import malloc_state
+from libheap.ptmalloc.ptmalloc import ptmalloc
+
 try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
     sys.exit()
 
-from libheap.frontend.printutils import print_title
-from libheap.frontend.printutils import print_value
-from libheap.frontend.printutils import print_error
-
-from libheap.ptmalloc.ptmalloc import ptmalloc
-
-from libheap.ptmalloc.malloc_par import malloc_par
-from libheap.ptmalloc.malloc_state import malloc_state
-from libheap.ptmalloc.malloc_chunk import malloc_chunk
-
 
 class heapls(gdb.Command):
     """Print a flat listing of an arena"""
 
     def __init__(self, debugger=None, version=None):
-        super(heapls, self).__init__("heapls", gdb.COMMAND_OBSCURE,
-                                     gdb.COMPLETE_NONE)
+        super(heapls, self).__init__("heapls", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE)
 
         if debugger is not None:
             self.dbg = debugger
@@ -42,9 +37,7 @@ class heapls(gdb.Command):
         if ptm.SIZE_SZ == 0:
             ptm.set_globals()
 
-        # XXX: from old heap command, replace
-        main_arena = self.dbg.read_variable("main_arena")
-        main_arena_address = self.dbg.format_address(main_arena.address)
+        main_arena_address = self.dbg.read_variable_address("main_arena")
         thread_arena = self.dbg.read_variable("thread_arena")
         if thread_arena is not None:
             thread_arena_address = self.dbg.format_address(thread_arena)
@@ -56,17 +49,15 @@ class heapls(gdb.Command):
         if len(argv) == 1:
             arena_address = int(argv[0], 16)
         elif len(argv):
-            print_error('Too many arguments')
+            print_error("Too many arguments")
             return
         else:
             arena_address = thread_arena_address
 
-        ar_ptr = malloc_state(arena_address, debugger=self.dbg,
-                              version=self.version)
+        ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
 
         # XXX: add mp_ address guessing via offset without symbols
-        mp_ = self.dbg.read_variable("mp_")
-        mp_address = mp_.address
+        mp_address = self.dbg.read_variable_address("mp_")
         mp = malloc_par(mp_address, debugger=self.dbg, version=self.version)
 
         if arena_address == main_arena_address:
@@ -79,15 +70,13 @@ class heapls(gdb.Command):
         # print("{:>19}".format("arena @ "), end="")
         # print_value("{:#x}".format(arena_address), end="\n\n")
         # print_title("{:>15}".format("flat heap listing"), end="\n")
-        print_title("{:>15}{:>17}{:>18}".format("ADDR", "SIZE", "STATUS"),
-                    end="\n")
+        print_title("{:>15}{:>17}{:>18}".format("ADDR", "SIZE", "STATUS"), end="\n")
         print("{:11}".format("sbrk_base"), end="")
         print_value("{:#x}".format(int(sbrk_base)), end="\n")
 
-        p = malloc_chunk(sbrk_base, inuse=True, read_data=False,
-                         debugger=self.dbg)
+        p = malloc_chunk(sbrk_base, inuse=True, read_data=False, debugger=self.dbg)
 
-        while(1):
+        while 1:
             print("{:11}".format("chunk"), end="")
             print_value("{: <#17x}".format(int(p.address)), end="")
             print("{: <#16x}".format(int(ptm.chunksize(p))), end="")
@@ -108,17 +97,20 @@ class heapls(gdb.Command):
                 print("BK ", end="")
                 print_value("{:#x} ".format(int(p.bk)))
 
-                if ((p.fd == ar_ptr.last_remainder) and
-                   (p.bk == ar_ptr.last_remainder) and
-                   (ar_ptr.last_remainder != 0)):
+                if (
+                    (p.fd == ar_ptr.last_remainder)
+                    and (p.bk == ar_ptr.last_remainder)
+                    and (ar_ptr.last_remainder != 0)
+                ):
                     print("(LR)")
-                elif ((p.fd == p.bk) & ~ptm.inuse(p)):
+                elif (p.fd == p.bk) & ~ptm.inuse(p):
                     print("(LC)")
                 else:
                     print("")
 
-            p = malloc_chunk(ptm.next_chunk(p), inuse=True, read_data=False,
-                             debugger=self.dbg)
+            p = malloc_chunk(
+                ptm.next_chunk(p), inuse=True, read_data=False, debugger=self.dbg
+            )
 
         sbrk_end = int(sbrk_base + ar_ptr.max_system_mem)
         print("{:11}".format("sbrk_end"), end="")

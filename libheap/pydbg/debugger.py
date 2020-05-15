@@ -20,6 +20,9 @@ class pydbg:
     def read_variable(self, variable):
         return self.debugger.read_variable(variable)
 
+    def read_variable_address(self, variable):
+        return self.debugger.read_variable_address(variable)
+
     def string_to_argv(self, arg):
         return self.debugger.string_to_argv(arg)
 

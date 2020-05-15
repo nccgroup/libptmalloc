@@ -1,5 +1,4 @@
 import sys
-
 from functools import wraps
 
 from libheap.frontend.printutils import print_error
@@ -16,10 +15,11 @@ def gdb_is_running(f):
 
     @wraps(f)
     def _gdb_is_running(*args, **kwargs):
-        if (gdb.selected_thread() is not None):
+        if gdb.selected_thread() is not None:
             return f(*args, **kwargs)
         else:
             print_error("GDB is not running.")
+
     return _gdb_is_running
 
 
@@ -39,7 +39,7 @@ class pygdbpython:
         except gdb.error:
             # python2 error: Cannot convert value to int.
             # value.cast(gdb.lookup_type("unsigned long"))
-            ret = int(str(value).split(' ')[0], 16)
+            ret = int(str(value).split(" ")[0], 16)
 
         return ret
 
@@ -53,6 +53,7 @@ class pygdbpython:
 
         if mp is not None:
             from libheap.ptmalloc.malloc_par import malloc_par
+
             if isinstance(mp, malloc_par):
                 start = mp.sbrk_base
             else:
@@ -64,9 +65,9 @@ class pygdbpython:
             maps_file = "/proc/%d/task/%d/maps"
             maps_data = open(maps_file % (pid, task_id)).readlines()
             for line in maps_data:
-                if any(x.strip() == '[heap]' for x in line.split(' ')):
-                    heap_range = line.split(' ')[0]
-                    start, end = [int(h, 16) for h in heap_range.split('-')]
+                if any(x.strip() == "[heap]" for x in line.split(" ")):
+                    heap_range = line.split(" ")[0]
+                    start, end = [int(h, 16) for h in heap_range.split("-")]
                     break
 
         return start, end
@@ -141,6 +142,30 @@ class pygdbpython:
         except ValueError:
             # variable was not found
             return None
+
+    @gdb_is_running
+    def read_variable_address(self, variable=None):
+        if variable is None:
+            print_error("Please specify a variable to read")
+            return None
+
+        try:
+            variable = gdb.selected_frame().read_var(variable)
+            return variable.address
+        except RuntimeError:
+            # No idea why this works but sometimes the frame is not selected
+            # print_error("No gdb frame is currently selected.\n")
+            try:
+                variable = gdb.selected_frame().read_var(variable)
+                return variable.address
+            except RuntimeError:
+                # variable was not found
+                # print_error("wrong here!")
+                return None
+        except (ValueError, AttributeError):
+            # variable was not found
+            res = gdb.execute("x/x &{}".format(variable), to_string=True)
+            return int(res.strip().split()[0], 16)
 
     @gdb_is_running
     def string_to_argv(self, arg=None):

@@ -1,6 +1,8 @@
 import os
 import sys
 
+sys.dont_write_bytecode = True
+
 # allow someone to manually import the module if they didn't actually install
 # it using pip
 try_reimport = False
@@ -51,7 +53,7 @@ class pyptmalloc:
 
         # Register GDB Commands
         frontend_gdb.frontend_gdb(self.debugger, self.glibc_version)
- 
+
         # Register GDB Pretty Printers
         pp = frontend_gdb_pretty_printers.pretty_print_heap_lookup
         gdb.pretty_printers.append(pp)
