@@ -7,7 +7,7 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    sys.exit()
+    raise Exception("sys.exit()")
 
 
 def gdb_is_running(f):
@@ -26,6 +26,7 @@ def gdb_is_running(f):
 class pygdbpython:
     def __init__(self):
         self.inferior = None
+        self.SIZE_SZ = 0
 
     @gdb_is_running
     def execute(self, cmd, to_string=True):
@@ -61,6 +62,7 @@ class pygdbpython:
 
             # XXX: add end from arena(s).system_mem ?
         else:
+            # XXX -
             pid, task_id, thread_id = gdb.selected_thread().ptid
             maps_file = "/proc/%d/task/%d/maps"
             maps_data = open(maps_file % (pid, task_id)).readlines()
@@ -90,30 +92,33 @@ class pygdbpython:
                 return self.inferior
         except AttributeError:
             print_error("This gdb's python support is too old.")
-            sys.exit()
+            raise Exception("sys.exit()")
 
     @gdb_is_running
     def get_size_sz(self):
+        if self.SIZE_SZ != 0:
+            return self.SIZE_SZ
+
         try:
             _machine = self.get_arch()[0]
         except IndexError:
             _machine = ""
-            SIZE_SZ = 0
-            print_error("Retrieving SIZE_SZ failed.")
+            self.SIZE_SZ = 0
+            print_error("Retrieving self.SIZE_SZ failed.")
         except TypeError:  # gdb is not running
             _machine = ""
-            SIZE_SZ = 0
-            print_error("Retrieving SIZE_SZ failed.")
+            self.SIZE_SZ = 0
+            print_error("Retrieving self.SIZE_SZ failed.")
 
         if "elf64" in _machine:
-            SIZE_SZ = 8
+            self.SIZE_SZ = 8
         elif "elf32" in _machine:
-            SIZE_SZ = 4
+            self.SIZE_SZ = 4
         else:
-            SIZE_SZ = 0
-            print_error("Retrieving SIZE_SZ failed.")
+            self.SIZE_SZ = 0
+            print_error("Retrieving self.SIZE_SZ failed.")
 
-        return SIZE_SZ
+        return self.SIZE_SZ
 
     @gdb_is_running
     def read_memory(self, address, length):
@@ -121,6 +126,27 @@ class pygdbpython:
             self.inferior = self.get_inferior()
 
         return self.inferior.read_memory(address, length)
+
+    def tohex(self, val, nbits):
+        """Handle gdb adding extra char to hexadecimal values."""
+        result = hex((val + (1 << nbits)) % (1 << nbits))
+        # -1 because hex() only sometimes tacks on a L to hex values...
+        if result[-1] == "L":
+            return result[:-1]
+        else:
+            return result
+
+    @gdb_is_running
+    def parse_variable(self, variable=None):
+        if variable is None:
+            print_error("Please specify a variable to read")
+            return None
+
+        if self.get_size_sz() == 4:
+            p = self.tohex(int(gdb.parse_and_eval(variable)), 32)
+        elif self.get_size_sz() == 8:
+            p = self.tohex(int(gdb.parse_and_eval(variable)), 64)
+        return int(p, 16)
 
     @gdb_is_running
     def read_variable(self, variable=None):

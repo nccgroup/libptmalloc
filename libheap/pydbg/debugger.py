@@ -17,6 +17,10 @@ class pydbg:
     def read_memory(self, address, length):
         return self.debugger.read_memory(address, length)
 
+    def parse_variable(self, variable):
+        """Parse and evaluate an gdb variable expression"""
+        return self.debugger.parse_variable(variable)
+
     def read_variable(self, variable):
         return self.debugger.read_variable(variable)
 
