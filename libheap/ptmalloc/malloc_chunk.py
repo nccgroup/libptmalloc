@@ -34,7 +34,7 @@ class malloc_chunk:
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         self.SIZE_SZ = self.dbg.get_size_sz()
 

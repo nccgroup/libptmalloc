@@ -12,7 +12,7 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    sys.exit()
+    raise Exception("sys.exit()")
 
 
 class heapls(gdb.Command):
@@ -25,7 +25,7 @@ class heapls(gdb.Command):
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            sys.exit()
+            raise Exception("sys.exit()")
 
         self.version = version
 
@@ -53,17 +53,19 @@ class heapls(gdb.Command):
             return
         else:
             arena_address = thread_arena_address
-
         ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
-
+        print(ar_ptr)
         # XXX: add mp_ address guessing via offset without symbols
         mp_address = self.dbg.read_variable_address("mp_")
+        print("{:#x}".format(mp_address))
         mp = malloc_par(mp_address, debugger=self.dbg, version=self.version)
+        print(mp)
 
         if arena_address == main_arena_address:
             start, _ = self.dbg.get_heap_address(mp)
         else:
             # XXX: start offset
+            print("Using manual ar_ptr calculation for heap start")
             start = arena_address + ar_ptr.size
         sbrk_base = start
 
@@ -86,6 +88,9 @@ class heapls(gdb.Command):
                 break
             elif p.size == (0 | ptm.PREV_INUSE):
                 print("(fence)")
+                break
+            elif p.size == 0:
+                print("WARNING: bad chunk size 0")
                 break
 
             if ptm.inuse(p):

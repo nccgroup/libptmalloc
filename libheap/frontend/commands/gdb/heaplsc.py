@@ -12,7 +12,7 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    sys.exit()
+    raise Exception('sys.exit()')
 
 
 class heaplsc(gdb.Command):
@@ -25,7 +25,7 @@ class heaplsc(gdb.Command):
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         self.version = version
 

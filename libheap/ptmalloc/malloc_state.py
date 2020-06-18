@@ -39,13 +39,13 @@ class malloc_state:
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         self.size_sz = self.dbg.get_size_sz()
 
         if version is None:
             print_error("Please specify a malloc_state version.")
-            sys.exit()
+            raise Exception('sys.exit()')
         else:
             self.version = version
 
@@ -99,7 +99,7 @@ class malloc_state:
     def unpack_memory(self):
         if self.mem is None:
             print_error("No memory found")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         self.mutex = self.unpack_variable("<I", 0)
         self.flags = self.unpack_variable("<I", 4)

@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import re
 
+debug_enabled = False
 colors_enabled = True
 
 # bash color support, taken from pwndbg
@@ -25,6 +26,18 @@ LIGHT_CYAN = "\x1b[96m"
 WHITE = "\x1b[97m"
 BOLD = "\x1b[1m"
 UNDERLINE = "\x1b[4m"
+
+
+def logmsg(s, end=None):
+    if type(s) == str:
+        if end is not None:
+            # print("[libptmalloc] " + s, end=end)
+            print(s, end=end)
+        else:
+            # print("[libptmalloc] " + s)
+            print(s)
+    else:
+        print(s)
 
 
 def none(x):
@@ -122,15 +135,21 @@ def terminateWith(x, color):
     return re.sub('\x1b\\[0m', NORMAL + color, x)
 
 
+def print_debug(s, end='\n'):
+    debug = "[#] {0}".format(s)
+    color = LIGHT_PURPLE
+    debug = colorize(debug, color)
+    logmsg(debug, end=end)
+
 def print_error(s, end="\n"):
     error = "[!] {0}".format(s)
     color = RED
     error = colorize(error, color)
-    print(error, end=end)
+    logmsg(error, end=end)
 
 
 def print_title(s, end="\n"):
-    print(color_title(s), end=end)
+    logmsg(color_title(s), end=end)
 
 
 def print_title_wide(s, end="\n"):
@@ -139,17 +158,17 @@ def print_title_wide(s, end="\n"):
     rwidth = (width-len(s))/2
     title = '{:=<{lwidth}}{}{:=<{rwidth}}'.format(
             '', s, '', lwidth=lwidth, rwidth=rwidth)
-    print(color_title(title), end=end)
+    logmsg(color_title(title), end=end)
 
 
 def print_header(s, end=""):
     color = YELLOW
     s = colorize(s, color)
-    print(s, end=end)
+    logmsg(s, end=end)
 
 
 def print_value(s, end=""):
-    print(color_value(s), end=end)
+    logmsg(color_value(s), end=end)
 
 
 def color_title(s):

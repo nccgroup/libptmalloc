@@ -10,7 +10,7 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    sys.exit()
+    raise Exception('sys.exit()')
 
 
 class heap(gdb.Command):
@@ -23,7 +23,7 @@ class heap(gdb.Command):
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         self.version = version
 

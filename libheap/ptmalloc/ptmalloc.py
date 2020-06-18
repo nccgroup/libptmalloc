@@ -37,7 +37,7 @@ class ptmalloc:
         if SIZE_SZ is None:
             if self.dbg is None:
                 print_error("Please specify a debugger.")
-                sys.exit()
+                raise Exception('sys.exit()')
 
             self.SIZE_SZ = self.dbg.get_size_sz()
         else:
@@ -177,7 +177,7 @@ class ptmalloc:
 
         if i == 0:
             print_error("bin_at(0) does not exist")
-            sys.exit()
+            raise Exception('sys.exit()')
 
         index = (i-1) * 2
         return m.bins[index]
