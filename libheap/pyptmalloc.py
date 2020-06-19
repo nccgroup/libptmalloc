@@ -47,10 +47,6 @@ class pyptmalloc:
     def __init__(self):
         self.is_gdb = is_gdb
 
-        # Setup debugger interface
-        debugger = pygdbpython()
-        self.debugger = pydbg(debugger)
-
         # Read User Config File
         config = configparser.ConfigParser()
         try:
@@ -62,8 +58,11 @@ class pyptmalloc:
             self.glibc_version = 2.31
 
         # Register GDB Commands
-        frontend_gdb.frontend_gdb(self.debugger, self.glibc_version)
-
-        # Register GDB Pretty Printers
-        pp = frontend_gdb_pretty_printers.pretty_print_heap_lookup
-        gdb.pretty_printers.append(pp)
+        if self.is_gdb:
+            # Setup debugger interface
+            debugger = pygdbpython()
+            self.debugger = pydbg(debugger)
+            frontend_gdb.frontend_gdb(self.debugger, self.glibc_version)
+            # Register GDB Pretty Printers
+            pp = frontend_gdb_pretty_printers.pretty_print_heap_lookup
+            gdb.pretty_printers.append(pp)

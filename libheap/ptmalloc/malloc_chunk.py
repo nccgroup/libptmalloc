@@ -1,42 +1,62 @@
-import sys
 import struct
+import sys
 
 from libheap import ptmalloc
-
-from libheap.frontend.printutils import color_title
-from libheap.frontend.printutils import color_value
-from libheap.frontend.printutils import print_error
+from libheap.frontend.printutils import color_title, color_value, print_error
+from libheap.ptmalloc.heap_structure import heap_structure
 
 
-class malloc_chunk:
+class malloc_chunk(heap_structure):
     "python representation of a struct malloc_chunk"
 
-    def __init__(self, addr=None, mem=None, size=None, inuse=False,
-                 read_data=True, debugger=None):
+    def __init__(
+        self,
+        ptm,
+        addr=None,
+        mem=None,
+        size=None,
+        inuse=False,
+        read_data=True,
+        debugger=None,
+    ):
+        super(malloc_chunk, self).__init__(ptm, debugger=debugger)
+        if not self.initOK:
+            return
+
         self.prev_size = 0
         self.size = 0
         self.data = None
+        # free specific
         self.fd = None
         self.bk = None
+
+        # large blocks specific + free specific
         self.fd_nextsize = None
         self.bk_nextsize = None
 
-        if addr is None or addr == 0:
-            if mem is None:
-                print_error("Please specify a valid struct malloc_chunk addr.")
-                return None
+        # actual chunk flags
+        self.cinuse_bit = 0
 
-            self.address = None
-        else:
-            self.address = addr
+        # fast chunk do not have their cinuse bit set when they are free
+        # instead we keep the info here
+        self.fastchunk_freed = False
+
+        # general indicator if we are inuse
+        self.inuse = inuse
+
+        self.data_address = None
+        self.hdr_size = 0
+
+        self.mem = mem
+        self.from_mem = False
+
+        if not self.validate_addr(addr):
+            return
 
         if debugger is not None:
             self.dbg = debugger
-        else:
-            print_error("Please specify a debugger")
-            raise Exception('sys.exit()')
 
-        self.SIZE_SZ = self.dbg.get_size_sz()
+        self.SIZE_SZ = self.ptm.SIZE_SZ
 
         if mem is None:
             # a string of raw memory was not provided
@@ -44,6 +64,7 @@ class malloc_chunk:
                 if self.SIZE_SZ == 4:
                     mem = self.dbg.read_memory(addr, 0x8)
                 elif self.SIZE_SZ == 8:
+
                     mem = self.dbg.read_memory(addr, 0x10)
             except TypeError:
                 print_error("Invalid address specified.")
@@ -73,7 +94,7 @@ class malloc_chunk:
         ptm = ptmalloc.ptmalloc.ptmalloc(debugger=self.dbg)
 
         if size is None:
-            real_size = (self.size & ~ptm.SIZE_BITS)
+            real_size = self.size & ~ptm.SIZE_BITS
         else:
             # a size was provided (for a malformed chunk with an invalid size)
             real_size = size & ~ptm.SIZE_BITS
@@ -83,23 +104,19 @@ class malloc_chunk:
                 if self.address is not None:
                     # a string of raw memory was not provided
                     try:
-                        mem = self.dbg.read_memory(addr, real_size +
-                                                   self.SIZE_SZ)
+                        mem = self.dbg.read_memory(addr, real_size + self.SIZE_SZ)
                     except TypeError:
                         print_error("Invalid address specified.")
                         return None
                     except RuntimeError:
-                        print_error("Could not read address {0:#x}".format(
-                                    addr))
+                        print_error("Could not read address {0:#x}".format(addr))
                         return None
 
                 real_size = (real_size - self.SIZE_SZ) / self.SIZE_SZ
                 if self.SIZE_SZ == 4:
-                    self.data = struct.unpack_from("<%dI" % real_size, mem,
-                                                   0x8)
+                    self.data = struct.unpack_from("<%dI" % real_size, mem, 0x8)
                 elif self.SIZE_SZ == 8:
-                    self.data = struct.unpack_from("<%dQ" % real_size, mem,
-                                                   0x10)
+                    self.data = struct.unpack_from("<%dQ" % real_size, mem, 0x10)
 
         if not inuse:
             if self.address is not None:
@@ -110,11 +127,19 @@ class malloc_chunk:
                     mem = self.dbg.read_memory(addr, 0x30)
 
             if self.SIZE_SZ == 4:
-                (self.fd, self.bk, self.fd_nextsize,
-                 self.bk_nextsize) = struct.unpack_from("<IIII", mem, 0x8)
+                (
+                    self.fd,
+                    self.bk,
+                    self.fd_nextsize,
+                    self.bk_nextsize,
+                ) = struct.unpack_from("<IIII", mem, 0x8)
             elif self.SIZE_SZ == 8:
-                (self.fd, self.bk, self.fd_nextsize,
-                 self.bk_nextsize) = struct.unpack_from("<QQQQ", mem, 0x10)
+                (
+                    self.fd,
+                    self.bk,
+                    self.fd_nextsize,
+                    self.bk_nextsize,
+                ) = struct.unpack_from("<QQQQ", mem, 0x10)
 
     def write(self, inferior=None):
         if self.fd is None and self.bk is None:
@@ -133,13 +158,25 @@ class malloc_chunk:
                     mem += struct.pack("<%dQ" % len(self.data), *self.data)
         else:
             if self.SIZE_SZ == 4:
-                mem = struct.pack("<IIIIII", self.prev_size, self.size,
-                                  self.fd, self.bk, self.fd_nextsize,
-                                  self.bk_nextsize)
+                mem = struct.pack(
+                    "<IIIIII",
+                    self.prev_size,
+                    self.size,
+                    self.fd,
+                    self.bk,
+                    self.fd_nextsize,
+                    self.bk_nextsize,
+                )
             elif self.SIZE_SZ == 8:
-                mem = struct.pack("<QQQQQQ", self.prev_size, self.size,
-                                  self.fd, self.bk, self.fd_nextsize,
-                                  self.bk_nextsize)
+                mem = struct.pack(
+                    "<QQQQQQ",
+                    self.prev_size,
+                    self.size,
+                    self.fd,
+                    self.bk,
+                    self.fd_nextsize,
+                    self.bk_nextsize,
+                )
 
         if self.dbg is not None:
             self.dbg.write_memory(self.address, mem)
@@ -161,16 +198,16 @@ class malloc_chunk:
                     ret += "\n{:11} = ".format("data")
                     ret += color_value("{}".format(self.data))
                     ret += "\n{:11} = ".format("raw")
-                    ret += color_value("{}".format(struct.pack(
-                                                   "<%dI" % len(self.data),
-                                                   *self.data)))
+                    ret += color_value(
+                        "{}".format(struct.pack("<%dI" % len(self.data), *self.data))
+                    )
                 elif self.SIZE_SZ == 8:
                     ret += "\n{:11} = ".format("data")
                     ret += color_value("{}".format(self.data))
                     ret += "\n{:11} = ".format("raw")
-                    ret += color_value("{}".format(struct.pack(
-                                                   "<%dQ" % len(self.data),
-                                                   *self.data)))
+                    ret += color_value(
+                        "{}".format(struct.pack("<%dQ" % len(self.data), *self.data))
+                    )
             return ret
         else:
             mc = color_title("struct malloc_chunk {")

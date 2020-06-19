@@ -11,22 +11,23 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    raise Exception('sys.exit()')
+    raise Exception("sys.exit()")
 
 
 class freebins(gdb.Command):
     """Walk and print the nonempty free bins."""
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(freebins, self).__init__(
             "freebins", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE
         )
 
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            raise Exception('sys.exit()')
+            raise Exception("sys.exit()")
 
         self.version = version
 

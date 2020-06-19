@@ -1,3 +1,4 @@
+from libheap import ptmalloc
 from libheap.frontend.commands.gdb.fastbins import fastbins
 from libheap.frontend.commands.gdb.freebins import freebins
 from libheap.frontend.commands.gdb.heap import heap
@@ -13,12 +14,14 @@ class frontend_gdb:
     """Register commands with GDB"""
 
     def __init__(self, debugger, version):
-        heap(debugger, version)
-        mstats(debugger, version)
-        heapls(debugger, version)
-        heaplsc(debugger, version)
-        fastbins(debugger, version)
-        freebins(debugger, version)
-        smallbins(debugger, version)
-        print_bin_layout(debugger, version)
-        ptchunk(debugger, version)
+        ptm = ptmalloc.ptmalloc.ptmalloc(debugger=debugger)
+
+        heap(ptm, debugger, version)
+        mstats(ptm, debugger, version)
+        heapls(ptm, debugger, version)
+        heaplsc(ptm, debugger, version)
+        fastbins(ptm, debugger, version)
+        freebins(ptm, debugger, version)
+        smallbins(ptm, debugger, version)
+        print_bin_layout(ptm, debugger, version)
+        ptchunk(ptm, debugger, version)

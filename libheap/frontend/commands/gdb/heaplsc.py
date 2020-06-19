@@ -12,20 +12,21 @@ try:
     import gdb
 except ImportError:
     print("Not running inside of GDB, exiting...")
-    raise Exception('sys.exit()')
+    raise Exception("sys.exit()")
 
 
 class heaplsc(gdb.Command):
     """Print compact arena layout (all chunks)"""
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(heaplsc, self).__init__("heaplsc", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE)
 
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:
             print_error("Please specify a debugger")
-            raise Exception('sys.exit()')
+            raise Exception("sys.exit()")
 
         self.version = version
 

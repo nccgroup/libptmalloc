@@ -18,11 +18,12 @@ except ImportError:
 class smallbins(gdb.Command):
     """Walk and print the small bins."""
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(smallbins, self).__init__(
             "smallbins", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE
         )
 
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:

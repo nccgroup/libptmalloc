@@ -20,11 +20,12 @@ except ImportError:
 class print_bin_layout(gdb.Command):
     "dump the layout of a free bin"
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(print_bin_layout, self).__init__(
             "print_bin_layout", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE
         )
 
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:

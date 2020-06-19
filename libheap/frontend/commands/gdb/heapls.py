@@ -18,9 +18,9 @@ except ImportError:
 class heapls(gdb.Command):
     """Print a flat listing of an arena"""
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(heapls, self).__init__("heapls", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE)
-
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:

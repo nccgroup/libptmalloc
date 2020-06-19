@@ -18,9 +18,10 @@ except ImportError:
 class ptchunk(gdb.Command):
     """libheap command help listing"""
 
-    def __init__(self, debugger=None, version=None):
+    def __init__(self, ptm, debugger=None, version=None):
         super(ptchunk, self).__init__("ptchunk", gdb.COMMAND_OBSCURE, gdb.COMPLETE_NONE)
 
+        self.ptm = ptm
         if debugger is not None:
             self.dbg = debugger
         else:
@@ -117,7 +118,7 @@ class ptchunk(gdb.Command):
             "--depth", dest="depth", type=int, default=0,
         )
         parser.add_argument(
-            "addresses", nargs="+", default=None,
+            "addresses", nargs="*", default=None,
         )
 
         args = parser.parse_args(arg.split())
@@ -138,10 +139,15 @@ class ptchunk(gdb.Command):
                 return
 
         ptm = ptmalloc(self.dbg)
-
-        for address in addresses:
-            print(hex(address))
-
-        # XXX
         if ptm.SIZE_SZ == 0:
             ptm.set_globals()
+
+        bFirst = True
+        for address in addresses:
+            if bFirst:
+                bFirst = False
+            else:
+                print("-" * 60)
+
+            # p = pt_chunk(self.pt, addr)
+            print(hex(address))
