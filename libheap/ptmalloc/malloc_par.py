@@ -132,12 +132,9 @@ class malloc_par:
         self.sbrk_base = self.unpack_variable(fmt, offset)
 
         # Sometimes sbrk_base isn't
-        print("initial: {:#x}".format(self.sbrk_base))
-        # XXX
         self.sbrk_base = self.sbrk_base + (self.CHUNK_ALIGNMENT - 1)
         self.sbrk_base = self.sbrk_base & (~(self.CHUNK_ALIGNMENT - 1))
         # self.sbrk_base += 0x8
-        print("after: {:#x}".format(self.sbrk_base))
 
         # could not read sbrk_base from mp_, fall back to maps file
         if (self.sbrk_base == 0) or (self.sbrk_base is None):

@@ -32,3 +32,13 @@ class pydbg:
 
     def write_memory(self, address, buf, length=None):
         return self.debugger.write_memory(address, buf, length)
+
+    def execute(self, cmd, to_string=True):
+        return self.debugger.execute(cmd, to_string=to_string)
+
+    def search(
+        self, start_address, end_address, search_for, width="32", to_string=True
+    ):
+        return self.debugger.search(
+            start_address, end_address, search_for, width=width, to_string=to_string
+        )

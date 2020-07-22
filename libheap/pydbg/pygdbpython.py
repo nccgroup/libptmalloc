@@ -210,3 +210,40 @@ class pygdbpython:
                 self.inferior.write_memory(address, buf, length)
         except MemoryError:
             print_error("GDB inferior write_memory error")
+
+    @gdb_is_running
+    def search(
+        self,
+        start_address,
+        end_address,
+        search_for,
+        max_results=1,
+        width="32",
+        to_string=True,
+    ):
+        """Find a string within some address range .
+
+        :start_address: where to start searching
+        :end_address: where to end searching
+        :search_for: what to search for
+        :to_string: whether not gdb should return the value as a string
+        :returns: TODO
+
+        """
+        width_modifiers = {
+            "8": "b",
+            "16": "h",
+            "32": "w",
+            "64": "g",
+            "string": "",
+        }
+        width = width_modifiers[width]
+        cmd = "find /%d%s 0x%x, 0x%x, %s" % (
+            max_results,
+            width,
+            start_address,
+            end_address,
+            search_for,
+        )
+        print(cmd)
+        return gdb.execute(cmd, to_string=to_string)

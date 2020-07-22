@@ -50,7 +50,7 @@ class heap(gdb.Command):
             print("Currently configured for version: {}".format(self.version))
             return
 
-        ptm = ptmalloc(self.dbg)
+        ptm = ptmalloc(debugger=self.dbg)
 
         if ptm.SIZE_SZ == 0:
             ptm.set_globals()

@@ -32,10 +32,11 @@ class heapls(gdb.Command):
     def invoke(self, arg, from_tty):
         """Inspired by jp's phrack print and arena.c"""
 
-        ptm = ptmalloc(debugger=self.dbg)
+        if not self.ptm:
+            self.ptm = ptmalloc(debugger=self.dbg)
 
-        if ptm.SIZE_SZ == 0:
-            ptm.set_globals()
+        if self.ptm.SIZE_SZ == 0:
+            self.ptm.set_globals()
 
         main_arena_address = self.dbg.read_variable_address("main_arena")
         thread_arena = self.dbg.read_variable("thread_arena")
@@ -54,12 +55,15 @@ class heapls(gdb.Command):
         else:
             arena_address = thread_arena_address
         ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
-        print(ar_ptr)
+        self.ptm.ar_ptr = ar_ptr
+        # print(ar_ptr)
         # XXX: add mp_ address guessing via offset without symbols
         mp_address = self.dbg.read_variable_address("mp_")
-        print("{:#x}".format(mp_address))
+        # print("{:#x}".format(mp_address))
         mp = malloc_par(mp_address, debugger=self.dbg, version=self.version)
-        print(mp)
+        self.ptm.mp = mp
+
+        # print(mp)
 
         if arena_address == main_arena_address:
             start, _ = self.dbg.get_heap_address(mp)
@@ -76,27 +80,31 @@ class heapls(gdb.Command):
         print("{:11}".format("sbrk_base"), end="")
         print_value("{:#x}".format(int(sbrk_base)), end="\n")
 
-        p = malloc_chunk(sbrk_base, inuse=True, read_data=False, debugger=self.dbg)
+        p = malloc_chunk(
+            self.ptm, addr=sbrk_base, inuse=True, read_data=False, debugger=self.dbg
+        )
 
         while 1:
             print("{:11}".format("chunk"), end="")
             print_value("{: <#17x}".format(int(p.address)), end="")
-            print("{: <#16x}".format(int(ptm.chunksize(p))), end="")
+            print("{: <#16x}".format(int(self.ptm.chunksize(p))), end="")
 
-            if p.address == ptm.top(ar_ptr):
+            if p.address == self.ptm.top(ar_ptr):
                 print("(top)")
                 break
-            elif p.size == (0 | ptm.PREV_INUSE):
+            elif p.size == (0 | self.ptm.PREV_INUSE):
                 print("(fence)")
                 break
             elif p.size == 0:
                 print("WARNING: bad chunk size 0")
                 break
 
-            if ptm.inuse(p):
+            if self.ptm.inuse(p):
                 print("(inuse)")
             else:
-                p = malloc_chunk(p.address, inuse=False, debugger=self.dbg)
+                p = malloc_chunk(
+                    self.ptm, addr=p.address, inuse=False, debugger=self.dbg
+                )
                 print("(F) FD ", end="")
                 print_value("{:#x} ".format(int(p.fd)))
                 print("BK ", end="")
@@ -108,13 +116,17 @@ class heapls(gdb.Command):
                     and (ar_ptr.last_remainder != 0)
                 ):
                     print("(LR)")
-                elif (p.fd == p.bk) & ~ptm.inuse(p):
+                elif (p.fd == p.bk) & ~self.ptm.inuse(p):
                     print("(LC)")
                 else:
                     print("")
 
             p = malloc_chunk(
-                ptm.next_chunk(p), inuse=True, read_data=False, debugger=self.dbg
+                self.ptm,
+                addr=self.ptm.next_chunk(p),
+                inuse=True,
+                read_data=False,
+                debugger=self.dbg,
             )
 
         sbrk_end = int(sbrk_base + ar_ptr.max_system_mem)

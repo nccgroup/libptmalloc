@@ -38,3 +38,15 @@ def show_last_exception():
 
 def is_ascii(s):
     return all(c < 128 and c > 1 for c in s)
+
+
+def string_to_int(num):
+    """Convert an integer or hex integer string to an int
+    :returns: converted integer
+
+    especially helpful for using ArgumentParser()
+    """
+    if num.find("0x") != -1:
+        return int(num, 16)
+    else:
+        return int(num)

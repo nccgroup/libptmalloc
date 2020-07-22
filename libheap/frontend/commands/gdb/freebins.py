@@ -34,10 +34,11 @@ class freebins(gdb.Command):
     def invoke(self, arg, from_tty):
         "modified from jp's phrack printing"
 
-        ptm = ptmalloc(debugger=self.dbg)
+        if not self.ptm:
+            self.ptm = ptmalloc(debugger=self.dbg)
 
-        if ptm.SIZE_SZ == 0:
-            ptm.set_globals()
+        if self.ptm.SIZE_SZ == 0:
+            self.ptm.set_globals()
 
         arena_address = self.dbg.read_variable_address("main_arena")
         ar_ptr = malloc_state(arena_address, debugger=self.dbg, version=self.version)
@@ -48,12 +49,14 @@ class freebins(gdb.Command):
 
         # print_title("Heap Dump")
 
-        for fb in range(0, ptm.NFASTBINS):
+        for fb in range(0, self.ptm.NFASTBINS):
             print_once = True
             p = malloc_chunk(
-                fb_base - (2 * ptm.SIZE_SZ) + fb * ptm.SIZE_SZ,
+                self.ptm,
+                addr=fb_base - (2 * self.ptm.SIZE_SZ) + fb * self.ptm.SIZE_SZ,
                 inuse=False,
                 debugger=self.dbg,
+                allow_invalid=True,
             )
 
             while p.fd != 0:
@@ -72,14 +75,20 @@ class freebins(gdb.Command):
                 print_value("{:#x} ".format(int(p.fd)))
                 print("- size ", end="")
                 p = malloc_chunk(p.fd, inuse=False, debugger=self.dbg)
-                print("{:#x}".format(int(ptm.chunksize(p))), end="")
+                print("{:#x}".format(int(self.ptm.chunksize(p))), end="")
 
-        for i in range(1, ptm.NBINS):
+        for i in range(1, self.ptm.NBINS):
             print_once = True
 
-            b = sb_base + i * 2 * ptm.SIZE_SZ - 4 * ptm.SIZE_SZ
-            first = ptm.first(malloc_chunk(b, inuse=False, debugger=self.dbg))
-            p = malloc_chunk(first, inuse=False, debugger=self.dbg)
+            b = sb_base + i * 2 * self.ptm.SIZE_SZ - 4 * self.ptm.SIZE_SZ
+            first = self.ptm.first(
+                malloc_chunk(
+                    self.ptm, addr=b, inuse=False, debugger=self.dbg, allow_invalid=True
+                )
+            )
+            p = malloc_chunk(
+                self.ptm, addr=first, inuse=False, debugger=self.dbg, allow_invalid=True
+            )
 
             while p.address != int(b):
                 if print_once:
@@ -92,12 +101,17 @@ class freebins(gdb.Command):
                         print_header("small bin {}".format(i))
 
                     print(" @ ", end="")
-                    print_value("{:#x}".format(int(b) + 2 * ptm.SIZE_SZ), end="")
+                    print_value("{:#x}".format(int(b) + 2 * self.ptm.SIZE_SZ), end="")
 
                 print("\n\tfree chunk @ ", end="")
                 print_value("{:#x} ".format(int(p.address)))
                 print("- size ", end="")
-                print("{:#x}".format(int(ptm.chunksize(p))), end="")
-                p = malloc_chunk(ptm.first(p), inuse=False, debugger=self.dbg)
-
+                print("{:#x}".format(int(self.ptm.chunksize(p))), end="")
+                p = malloc_chunk(
+                    self.ptm,
+                    addr=self.ptm.first(p),
+                    inuse=False,
+                    debugger=self.dbg,
+                    allow_invalid=True,
+                )
         print("")

@@ -172,7 +172,7 @@ class pt_helper:
         self.MIN_LARGE_SIZE = self.NSMALLBINS * self.SMALLBIN_WIDTH
 
         self.MAX_FAST_SIZE = 80 * self.SIZE_SZ / 4
-        self.NFASTBINS = self.fastbin_index(self.request2size(self.MAX_FAST_SIZE)) + 1
+        self.NFASTBIN = self.fastbin_index(self.request2size(self.MAX_FAST_SIZE)) + 1
 
         self.ptchunk_callback = None
         self.ptchunk_callback_cached = None
@@ -258,7 +258,7 @@ class pt_helper:
         "Get size, ignoring use bits"
         return p.size & ~self.SIZE_BITS
 
-    def ptr_from_ptmalloc_chunk(self, p):
+        def ptr_from_ptmalloc_chunk(self, p):
         return p.address + (self.SIZE_SZ * 2)
 
     def next_chunk(self, p):
