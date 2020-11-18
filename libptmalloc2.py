@@ -31,12 +31,14 @@ import traceback
 from functools import wraps
 from os.path import basename
 
-import helper as h
-from prettyprinters import *
-from printutils import *
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+try:
+    import helper as h
+    from prettyprinters import *
+    from printutils import *
+except ImportError:
+    print("[libptmalloc] sys.path needs tweaking")
 
 try:
     import gdb
@@ -151,6 +153,9 @@ class pt_helper:
 
     HEAP_MIN_SIZE = 32 * 1024
     HEAP_MAX_SIZE = 1024 * 1024
+    DEFAULT_LIBC_VERSION = (2, 31)
+    # This should correspond to pt_arenas entries
+    known_versions = ["2.31"]
 
     def __init__(self, size_sz=0):
         self.terse = True  # XXX - This should be configurable
@@ -183,6 +188,11 @@ class pt_helper:
         # Assume we can re-use known mstate when not specified
         self.pt_cached_mstate = None
         self.arena_address = None
+
+        self.version = self.DEFAULT_LIBC_VERSION
+
+    def get_version(self):
+        return ".".join(map(str, self.version))
 
     def logmsg(self, s, end=None):
         if type(s) == str:
@@ -1101,7 +1111,8 @@ class pt_chunk(pt_structure):
                 )
             except gdb.MemoryError:
                 self.pt.logmsg(
-                    "Could not read nextchunk's size. Invalid chunk address?"
+                    "Could not read nextchunk's size @ 0x%x. Invalid chunk address?"
+                    % nextchunk_addr
                 )
                 self.initOK = False
                 return
@@ -1503,6 +1514,10 @@ class pt_arena(pt_structure):
 
     def __init__(self, pt, addr=None, mem=None, inferior=None):
         super(pt_arena, self).__init__(pt)
+        self.malloc_state_size_32 = 0x450  # default from cisco asa
+        self.malloc_state_size_64 = 0x888
+
+        # malloc_state variables
         self.mutex = 0
         self.flags = 0
         self.fastbinsY = 0
@@ -1514,6 +1529,11 @@ class pt_arena(pt_structure):
         self.next_free = 0
         self.system_mem = 0
         self.max_system_mem = 0
+
+        # geb handling variables
+        self.addr = addr
+        self.mem = mem
+        self.inferior = inferior
 
         if addr is None:
             if mem is None:
@@ -1533,43 +1553,16 @@ class pt_arena(pt_structure):
             # a string of raw memory was not provided
             try:
                 if self.pt.SIZE_SZ == 4:
-                    mem = inferior.read_memory(addr, 0x450)
+                    self.mem = inferior.read_memory(addr, self.malloc_state_size_32)
                 elif self.pt.SIZE_SZ == 8:
-                    mem = inferior.read_memory(addr, 0x888)
+                    # mem = inferior.read_memory(addr, 0x888)
+                    self.mem = inferior.read_memory(addr, self.malloc_state_size_64)
             except TypeError:
                 print_error("Invalid address specified.")
                 return None
             except RuntimeError:
                 print_error("Could not read address {0:#x}".format(addr))
                 return None
-
-        if self.pt.SIZE_SZ == 4:
-            (self.mutex, self.flags) = struct.unpack_from("<II", mem, 0x0)
-            self.fastbinsY = struct.unpack_from("<10I", mem, 0x8)
-            (self.top, self.last_remainder) = struct.unpack_from("<II", mem, 0x30)
-
-            self.bins = struct.unpack_from("<254I", mem, 0x38)
-            self.binmap = struct.unpack_from("<IIII", mem, 0x430)
-            (
-                self.next,
-                self.next_free,
-                self.system_mem,
-                self.max_system_mem,
-            ) = struct.unpack_from("<IIII", mem, 0x440)
-        elif self.pt.SIZE_SZ == 8:
-            (self.mutex, self.flags) = struct.unpack_from("<II", mem, 0x0)
-            self.fastbinsY = struct.unpack_from("<10Q", mem, 0x8)
-            (self.top, self.last_remainder) = struct.unpack_from("<QQ", mem, 0x58)
-            self.bins = struct.unpack_from("<254Q", mem, 0x68)
-            self.binmap = struct.unpack_from("<IIII", mem, 0x858)
-            (
-                self.next,
-                self.next_free,
-                self.system_mem,
-                self.max_system_mem,
-            ) = struct.unpack_from("<QQQQ", mem, 0x868)
-
-        self.pt.pt_cached_mstate = self
 
     def __str__(self):
         ms = color_title("struct malloc_mstate {")
@@ -1594,11 +1587,17 @@ class pt_arena(pt_structure):
         # ms += "\n{:14} = ".format("bins")
         # ms += color_value("{}".format("{...}"))
         i = 0
+        bin_idx = 1
         while i < len(self.bins):
-            ms += "\n{:11} = ".format("bin[%d]: " % int(i / 2))
+            if bin_idx == 1:
+                ms += "\n{:11} = ".format("unsorted_bin (bin[%d]): " % int(i / 2))
+            else:
+                ms += "\n{:11} = ".format("bin[%d]: " % int(i / 2))
             ms += color_value("{:#x}, ".format(self.bins[i]))
             ms += color_value("{:#x}".format(self.bins[i + 1]))
             i += 2
+            bin_idx += 1
+
         # XXX - make this look nicer in output
         # ms += "\n{:14} = ".format("binmap")
         # ms += color_value("{}".format("{...}"))
@@ -1618,7 +1617,70 @@ class pt_arena(pt_structure):
         return ms
 
 
-################################################################################
+# glibc 2.31 version
+class pt_arena_2_31(pt_structure):
+    "python version of glibc 2.31 struct malloc_state which represents an arena"
+
+    def __init__(self, pt, addr=None, mem=None, inferior=None):
+        self.malloc_state_size = 0x898
+
+        # rely on pt_arena() to get us going
+        super(pt_arena_2_31, self).__init__(pt, addr, mem, inferior)
+        if mem is None:
+            mem = self.mem
+
+        if self.pt.SIZE_SZ == 4:
+            (self.mutex, self.flags) = struct.unpack_from("<II", mem, 0x0)
+            self.fastbinsY = struct.unpack_from("<10I", mem, 0x8)
+            (self.top, self.last_remainder) = struct.unpack_from("<II", mem, 0x30)
+
+            self.bins = struct.unpack_from("<254I", mem, 0x38)
+            self.binmap = struct.unpack_from("<IIII", mem, 0x430)
+            (
+                self.next,
+                self.next_free,
+                self.system_mem,
+                self.max_system_mem,
+            ) = struct.unpack_from("<IIII", mem, 0x440)
+        elif self.pt.SIZE_SZ == 8:
+            (self.mutex, self.flags) = struct.unpack_from("<II", mem, 0x0)
+            cur_offset = 8
+
+            # glibc 2.31 or earlier added attached_threads
+            self.have_fastchunks = struct.unpack_from("<I", mem, cur_offset)
+            cur_offset += 4
+            # seems to be aligned
+            cur_offset += 4
+
+            # XXX - Use NFASTBINS
+            self.fastbinsY = struct.unpack_from("<10Q", mem, cur_offset)
+            cur_offset += 0x50
+
+            (self.top, self.last_remainder) = struct.unpack_from("<QQ", mem, cur_offset)
+            cur_offset += 0x10
+
+            # XXX - Use NBINS
+            self.bins = struct.unpack_from("<254Q", mem, cur_offset)
+            cur_offset += 0x7F0
+
+            # XXX - Use BINMAPSIZE
+            self.binmap = struct.unpack_from("<IIII", mem, cur_offset)
+            cur_offset += 0x10
+
+            (
+                self.next,
+                self.next_free,
+                self.attached_threads,  # glibc 2.31 or earlier added attached_threads
+                self.system_mem,
+                self.max_system_mem,
+            ) = struct.unpack_from("<QQQQQ", mem, cur_offset)
+            # cur_offset += 0x20
+            cur_offset += 0x28
+
+        self.pt.pt_cached_mstate = self
+
+
+###############################################################################
 class pt_malloc_par(pt_structure):
     "python representation of a struct malloc_par"
 
@@ -2169,6 +2231,7 @@ if is_gdb:
                     if count != 0:
                         if verbose == 1 or hexdump:
                             print("--")
+                        print("address: 0x%x" % (p.address + self.pt.chunksize(p)))
                         p = pt_chunk(self.pt, addr=(p.address + self.pt.chunksize(p)))
                         if p.initOK is False:
                             break
@@ -2178,9 +2241,11 @@ if is_gdb:
     ###########################################################################
     class ptarena(ptcmd):
         "print a comprehensive view of mstate the representing an arena"
+        pt_arenas = {"2.31": pt_arena_2_31}
 
         def __init__(self, pt):
             super(ptarena, self).__init__(pt, "ptarena")
+            self.pt_arena = self.pt_arenas[self.pt.get_version()]
 
         def help(self):
             self.pt.logmsg("usage: ptarena [-v] [-f] [-x] [-c <count>] <addr>")
@@ -2243,7 +2308,7 @@ if is_gdb:
                 if arena_address == 0 or arena_address is None:
                     self.pt.logmsg("Invalid arena address (0)")
                     return
-                ar_ptr = pt_arena(self.pt, arena_address)
+                ar_ptr = self.pt_arena(self.pt, arena_address)
 
             if ar_ptr.next == 0:
                 self.pt.logmsg("No arenas could be correctly guessed.")
@@ -2315,7 +2380,7 @@ if is_gdb:
                 return
 
             if p is not None:
-                p = pt_arena(self.pt, p)
+                p = self.pt_arena(self.pt, p)
                 self.pt.logmsg("Caching mstate")
                 self.pt.pt_cached_mstate = p
             else:
@@ -2573,7 +2638,7 @@ if is_gdb:
             super(ptscanchunks, self).__init__(pt, "ptscanchunks")
 
         def help(self):
-            self.logmsg("usage: ptscanchunks [<addr_list>")
+            self.logmsg("usage: ptscanchunks [<addr_list>]")
             self.logmsg(" <addr>  comma separated list of arena addresses")
             return
 
@@ -2598,6 +2663,55 @@ if is_gdb:
             except Exception as e:
                 h.show_last_exception()
 
+    class ptversion(ptcmd):
+        def __init__(self, pt):
+            super(ptversion, self).__init__(pt, "ptversion")
+
+        def help(self):
+            self.logmsg("usage: ptversion [-l] [<version>]")
+            self.pt.logmsg(" <version>  the libc version to set")
+            self.pt.logmsg(" -l     list supported versions")
+            self.pt.logmsg(" -h     this help menu")
+            return
+
+        def invoke(self, arg, from_tty):
+            try:
+                self.invoke_(arg, from_tty)
+            except Exception:
+                h.show_last_exception()
+
+        @hgdb.has_inferior
+        def invoke_(self, arg, from_tty):
+            if arg == "":
+                self.pt.logmsg(
+                    "Current LIBC version set to: {}".format(self.pt.get_version())
+                )
+                return
+
+            if arg is not None:
+                for item in arg.split():
+                    if item.find("-l") != -1:
+                        list_only = True
+                    elif item.find("-f") != -1:
+                        find_version = True
+                    elif item.find("-h") != -1:
+                        self.help()
+                        return
+
+            if list_only:
+                self.pt.logmsg("List of supported libc versions:")
+                for version in self.pt.known_versions:
+                    self.pt.logmsg(version)
+
+                self.pt.logmsg(
+                    "Current LIBC version set to: {}".format(self.pt.get_version())
+                )
+                self.pt.logmsg("Change with ptversion <version>")
+                return
+
+            if find_version:
+                return
+
     ###########################################################################
     class pthelp(ptcmd):
         "Details about all libptmalloc gdb commands"
@@ -2617,8 +2731,9 @@ if is_gdb:
             self.pt.logmsg(
                 "ptarena      : print mstate struct. caches address after first use"
             )
+            self.pt.logmsg("ptbin        : print the contents of a free bin")
             self.pt.logmsg(
-                "ptcallback   : print mstate struct. caches address after first use"
+                "ptcallback   : register a callback to be executed that is passed chunk data"
             )
             self.pt.logmsg(
                 "ptarenaof    : print arena for a given chunk or a list of chunks"
@@ -2642,5 +2757,6 @@ if __name__ == "__main__":
     ptbin(pth)
     ptarenaof(pth)
     ptscanchunks(pth)
+    ptversion(pth)
 
     pth.logmsg("loaded")
