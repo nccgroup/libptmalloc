@@ -1,9 +1,11 @@
-# -*- coding: future_fstrings -*-
 import struct
 import sys
+import importlib
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import heap_structure as hs
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.heap_structure as hs
+importlib.reload(hs)
 
 class malloc_state(hs.heap_structure):
     "python representation of a struct malloc_state"

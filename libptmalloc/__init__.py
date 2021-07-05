@@ -1,9 +1,12 @@
-# -*- coding: future_fstrings -*-
 import sys
+import importlib
 import logging
 
-from libptmalloc import logger
-from libptmalloc import pyptmalloc as pyp
+import libptmalloc.logger as logger
+importlib.reload(logger)
+
+import libptmalloc.pyptmalloc as pyp
+importlib.reload(pyp)
 
 try:
     log

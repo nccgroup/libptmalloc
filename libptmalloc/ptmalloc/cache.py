@@ -1,13 +1,17 @@
-# -*- coding: future_fstrings -*-
 import struct
 import sys
+import importlib
 import hexdump
 import logging
 
-from libptmalloc.ptmalloc import tcache_perthread as tp
-from libptmalloc.ptmalloc import malloc_chunk as mc
-from libptmalloc.ptmalloc import malloc_state as ms
-from libptmalloc.ptmalloc import malloc_par as mp
+import libptmalloc.ptmalloc.tcache_perthread as tp
+importlib.reload(tp)
+import libptmalloc.ptmalloc.malloc_chunk as mc
+importlib.reload(mc)
+import libptmalloc.ptmalloc.malloc_state as ms
+importlib.reload(ms)
+import libptmalloc.ptmalloc.malloc_par as mp
+importlib.reload(mp)
 
 log = logging.getLogger("libptmalloc")
 log.trace("cache.py")

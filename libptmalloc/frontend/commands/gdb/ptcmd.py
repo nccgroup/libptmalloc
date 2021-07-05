@@ -1,9 +1,20 @@
-# -*- coding: future_fstrings -*-
+# Note: We can't importlib.reload() this file atm because
+# otherwise we get an "super(type, obj): obj must be an instance 
+# or subtype of type" when instanciating
+# several classes inheriting from the same ptcmd class.
+# See https://thomas-cokelaer.info/blog/2011/09/382/
+# This file should not change much anyway but if we modify it, we need to restart gdb
+# entirely instead of reloading libptmalloc only
+
 import logging
+import importlib
 import shlex
 from functools import wraps
 
-from libptmalloc.frontend import printutils as pu
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+# import libptmalloc.frontend.helpers as h
+# importlib.reload(h)
 
 log = logging.getLogger("libptmalloc")
 log.trace("ptcmd.py")

@@ -1,18 +1,25 @@
-# -*- coding: future_fstrings -*-
 from __future__ import print_function
 
 import argparse
 import sys
 import logging
+import importlib
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import malloc_chunk as mc
-from libptmalloc.ptmalloc import malloc_par as mp
-from libptmalloc.ptmalloc import malloc_state as ms
-from libptmalloc.ptmalloc import ptmalloc as pt
-from libptmalloc.frontend import helpers as h
-from libptmalloc.frontend.commands.gdb import ptchunk
-from libptmalloc.frontend.commands.gdb import ptcmd
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.malloc_chunk as mc
+importlib.reload(mc)
+import libptmalloc.ptmalloc.malloc_par as mp
+importlib.reload(mp)
+import libptmalloc.ptmalloc.malloc_state as ms
+importlib.reload(ms)
+import libptmalloc.ptmalloc.ptmalloc as pt
+importlib.reload(pt)
+import libptmalloc.frontend.helpers as h
+importlib.reload(h)
+import libptmalloc.frontend.commands.gdb.ptchunk as ptchunk
+importlib.reload(ptchunk)
+import libptmalloc.frontend.commands.gdb.ptcmd as ptcmd # no reload on purpose
 
 log = logging.getLogger("libptmalloc")
 log.trace("ptlist.py")

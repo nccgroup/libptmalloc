@@ -1,21 +1,33 @@
-# -*- coding: future_fstrings -*-
 import logging
+import importlib
 
 log = logging.getLogger("libptmalloc")
 log.trace(f"frontend_gdb.py")
 
-from libptmalloc.frontend.commands.gdb import ptfast
-from libptmalloc.frontend.commands.gdb import pthelp
-from libptmalloc.frontend.commands.gdb import ptlist
-from libptmalloc.frontend.commands.gdb import ptstats
-from libptmalloc.frontend.commands.gdb import ptchunk
-from libptmalloc.frontend.commands.gdb import ptfree
-from libptmalloc.frontend.commands.gdb import ptbin
-from libptmalloc.frontend.commands.gdb import ptarena
-from libptmalloc.frontend.commands.gdb import ptparam
-from libptmalloc.frontend.commands.gdb import ptmeta
-from libptmalloc.frontend.commands.gdb import ptconfig
-from libptmalloc.frontend.commands.gdb import pttcache
+import libptmalloc.frontend.commands.gdb.ptfast as ptfast
+importlib.reload(ptfast)
+import libptmalloc.frontend.commands.gdb.pthelp as pthelp
+importlib.reload(pthelp)
+import libptmalloc.frontend.commands.gdb.ptlist as ptlist
+importlib.reload(ptlist)
+import libptmalloc.frontend.commands.gdb.ptstats as ptstats
+importlib.reload(ptstats)
+import libptmalloc.frontend.commands.gdb.ptchunk as ptchunk
+importlib.reload(ptchunk)
+import libptmalloc.frontend.commands.gdb.ptfree as ptfree
+importlib.reload(ptfree)
+import libptmalloc.frontend.commands.gdb.ptbin as ptbin
+importlib.reload(ptbin)
+import libptmalloc.frontend.commands.gdb.ptarena as ptarena
+importlib.reload(ptarena)
+import libptmalloc.frontend.commands.gdb.ptparam as ptparam
+importlib.reload(ptparam)
+import libptmalloc.frontend.commands.gdb.ptmeta as ptmeta
+importlib.reload(ptmeta)
+import libptmalloc.frontend.commands.gdb.ptconfig as ptconfig
+importlib.reload(ptconfig)
+import libptmalloc.frontend.commands.gdb.pttcache as pttcache
+importlib.reload(pttcache)
 
 class frontend_gdb:
     """Register commands with GDB"""

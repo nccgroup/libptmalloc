@@ -1,4 +1,3 @@
-# -*- coding: future_fstrings -*-
 import logging
 
 # https://stackoverflow.com/questions/2183233/how-to-add-a-custom-loglevel-to-pythons-logging-facility

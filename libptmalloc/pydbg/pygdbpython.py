@@ -1,13 +1,15 @@
-# -*- coding: future_fstrings -*-
 import sys
 import logging
+import importlib
 import hexdump
 import re
 from pathlib import Path
 from functools import wraps
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import malloc_par as mp
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.malloc_par as mp
+importlib.reload(mp)
 
 log = logging.getLogger("libptmalloc")
 log.trace("pygdbpython.py")

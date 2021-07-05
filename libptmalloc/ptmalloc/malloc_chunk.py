@@ -1,17 +1,23 @@
-# -*- coding: future_fstrings -*-
 import struct
 import sys
+import importlib
 import logging
 
 log = logging.getLogger("libptmalloc")
 log.trace(f"malloc_chunk.py")
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import heap_structure as hs
-from libptmalloc.frontend import helpers as h
-from libptmalloc.frontend.commands.gdb import pttcache
-from libptmalloc.frontend.commands.gdb import ptfast
-from libptmalloc.ptmalloc import ptmalloc as pt
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.heap_structure as hs
+importlib.reload(hs)
+import libptmalloc.frontend.helpers as h
+importlib.reload(h)
+import libptmalloc.frontend.commands.gdb.pttcache as pttcache
+importlib.reload(pttcache)
+import libptmalloc.frontend.commands.gdb.ptfast as ptfast
+importlib.reload(ptfast)
+import libptmalloc.ptmalloc.ptmalloc as pt
+importlib.reload(pt)
 
 class malloc_chunk(hs.heap_structure):
     """python representation of a struct malloc_chunk

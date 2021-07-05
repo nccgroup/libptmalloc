@@ -1,5 +1,7 @@
-# -*- coding: future_fstrings -*-
-from libptmalloc.frontend import helpers as h
+import importlib
+
+import libptmalloc.frontend.helpers as h
+importlib.reload(h)
 
 class pydbg:
     """Python abstraction interface that allows calling into any specific debugger APIs

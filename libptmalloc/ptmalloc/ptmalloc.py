@@ -1,23 +1,27 @@
-# -*- coding: future_fstrings -*-
 import struct
 import sys
+import importlib
 import logging
-from enum import Enum
+from enum import Enum, auto
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import malloc_state as ms
-from libptmalloc.ptmalloc import malloc_chunk as mc
-from libptmalloc.ptmalloc import cache as c
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.malloc_state as ms
+importlib.reload(ms)
+import libptmalloc.ptmalloc.malloc_chunk as mc
+importlib.reload(mc)
+import libptmalloc.ptmalloc.cache as c
+importlib.reload(c)
 
 log = logging.getLogger("libptmalloc")
 log.trace("ptmalloc.py")
 
 class chunk_type(Enum):
-    INUSE = 1
-    FREE_SMALL = 2
-    FREE_LARGE = 3
-    FREE_FAST = 4
-    FREE_TCACHE = 5
+    INUSE = auto() # == 1
+    FREE_SMALL = auto()
+    FREE_LARGE = auto()
+    FREE_FAST = auto()
+    FREE_TCACHE = auto()
 
 class ptmalloc:
     def __init__(self, SIZE_SZ=None, debugger=None, version=None, tcache_enabled=None):

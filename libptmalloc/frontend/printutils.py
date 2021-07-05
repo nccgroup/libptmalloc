@@ -1,4 +1,3 @@
-# -*- coding: future_fstrings -*-
 # taken from https://github.com/cloudburst/libheap/blob/master/libheap/frontend/printutils.py
 
 from __future__ import print_function

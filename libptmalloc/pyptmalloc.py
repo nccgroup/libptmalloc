@@ -1,6 +1,6 @@
-# -*- coding: future_fstrings -*-
 import os
 import sys
+import importlib
 
 try:
     import gdb
@@ -13,11 +13,16 @@ try:
 except:
     import ConfigParser as configparser  # py2
 
-from libptmalloc.frontend import frontend_gdb as fg
-from libptmalloc.ptmalloc import ptmalloc as pt
-from libptmalloc.pydbg import debugger as d
-from libptmalloc.pydbg import pygdbpython as pgp
-from libptmalloc.frontend.commands.gdb import ptconfig as ptconfig
+import libptmalloc.frontend.frontend_gdb as fg
+importlib.reload(fg)
+import libptmalloc.ptmalloc.ptmalloc as pt
+importlib.reload(pt)
+import libptmalloc.pydbg.debugger as d
+importlib.reload(d)
+import libptmalloc.pydbg.pygdbpython as pgp
+importlib.reload(pgp)
+import libptmalloc.frontend.commands.gdb.ptconfig as ptconfig
+importlib.reload(ptconfig)
 
 class pyptmalloc:
     """Entry point of libptmalloc"""

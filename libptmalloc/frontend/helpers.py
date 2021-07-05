@@ -1,4 +1,3 @@
-# -*- coding: future_fstrings -*-
 import sys
 import traceback
 import argparse

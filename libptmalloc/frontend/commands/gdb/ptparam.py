@@ -1,4 +1,3 @@
-# -*- coding: future_fstrings -*-
 from __future__ import print_function
 
 import argparse
@@ -6,11 +5,15 @@ import binascii
 import struct
 import sys
 import logging
+import importlib
 
-from libptmalloc.frontend import printutils as pu
-from libptmalloc.ptmalloc import ptmalloc as pt
-from libptmalloc.frontend import helpers as h
-from libptmalloc.frontend.commands.gdb import ptcmd
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
+import libptmalloc.ptmalloc.ptmalloc as pt
+importlib.reload(pt)
+import libptmalloc.frontend.helpers as h
+importlib.reload(h)
+import libptmalloc.frontend.commands.gdb.ptcmd as ptcmd # no reload on purpose
 
 log = logging.getLogger("libptmalloc")
 log.trace("ptparam.py")
