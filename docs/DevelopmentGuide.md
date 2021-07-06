@@ -71,7 +71,7 @@ The `dev` branch only supports Python >= 3.7. This is for commodity reasons, as 
 
 ## Python namespaces limitation
 
-One quirk of Python namespaces and tools like gdb which allows importing Python files is that it won't reload files that have been already imported, except if you especially request it. So let's consider a scenario where you source `A.py` which imports `B.py` (using `import B` or `from B import *`), it will import `B`. Now you modify `B.py` and re-source `A.py` in your debugger to test your changes. Unfortunately the changes made to `B.py` won't be taken into account. The only solution will be to reload gdb entirely before reloading `A.py`.
+One quirk of Python namespaces and tools like gdb which allows importing Python files is that it won't reload files that have already been imported, except if you especially request it. So let's consider a scenario where you source `A.py` which imports `B.py` (using `import B` or `from B import *`), it will import `B`. Now you modify `B.py` and re-source `A.py` in your debugger to test your changes. Unfortunately the changes made to `B.py` won't be taken into account. The only solution will be to reload gdb entirely before reloading `A.py`.
 
 To work around that limitation, we use `importlib.reload()` in the dev branch for all the imported modules. This slows down significantly reloading libptmalloc but it is still faster than reloading gdb :)
 
@@ -99,3 +99,7 @@ In particular we recommend having at least the following versions:
 * https://ftp.gnu.org/gnu/glibc/glibc-2.27.tar.gz (+ malloc_state.have_fastchunks)
 
 There are important changes between 2 versions that follow each other above.
+
+Also since Photon OS 3.0 has a custom glibc (custom fields in malloc_par and USE_TCACHE not defined), you can download one of their version such as:
+
+* https://packages.vmware.com/photon/3.0/photon_srpms_3.0_x86_64/glibc-2.28-13.ph3.src.rpm
