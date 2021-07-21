@@ -21,6 +21,7 @@ def execute_and_log(command, max_lines=-1):
     print("```")
     print("")
 
+print("")
 print_title("Usage", 1)
 
 print_title("libptmalloc commands", 2)
@@ -172,7 +173,7 @@ print("""We first notice this chunk holds the libgcc path:
 
 execute_and_log("ptchunk 0x7ffff0001400 -v -x")
 
-print("""The 'ptmeta command is more advanced and allows to associate user-defined metadata
+print("""The 'ptmeta' command is more advanced and allows to associate user-defined metadata
 for given chunks' addresses. E.g. you can add a tag as metadata:
 """)
 execute_and_log("ptmeta add 0x7ffff0001400 tag \"libgcc path\"")

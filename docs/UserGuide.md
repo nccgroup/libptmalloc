@@ -547,7 +547,7 @@ size        = 0x30 (PREV_INUSE|NON_MAIN_ARENA|)
 0x7ffff0001420:  78 2D 67 6E 75 00 6C 69  62 67 63 63 5F 73 2E 73  x-gnu.libgcc_s.s
 ```
 
-The 'ptmeta command is more advanced and allows to associate user-defined metadata
+The 'ptmeta' command is more advanced and allows to associate user-defined metadata
 for given chunks' addresses. E.g. you can add a tag as metadata:
 
 ```
