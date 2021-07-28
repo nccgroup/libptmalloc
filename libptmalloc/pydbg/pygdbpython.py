@@ -34,6 +34,10 @@ def gdb_is_running(f):
 
     return _gdb_is_running
 
+@gdb_is_running
+def check_if_gdb_is_running():
+    return True
+
 class pygdbpython:
     """Debugger bridge calling into gdb-specific APIs
     

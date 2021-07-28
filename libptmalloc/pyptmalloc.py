@@ -23,6 +23,8 @@ import libptmalloc.pydbg.pygdbpython as pgp
 importlib.reload(pgp)
 import libptmalloc.frontend.commands.gdb.ptconfig as ptconfig
 importlib.reload(ptconfig)
+import libptmalloc.frontend.printutils as pu
+importlib.reload(pu)
 
 class pyptmalloc:
     """Entry point of libptmalloc"""
@@ -36,6 +38,12 @@ class pyptmalloc:
         config = configparser.SafeConfigParser()
         path = os.path.abspath(os.path.dirname(__file__))
         config.read(os.path.join(path, "libptmalloc.cfg"))
+
+        # atm we only support loading libptmalloc from gdb so it eases the user
+        # to know to load it after the program runs
+        if not pgp.check_if_gdb_is_running():
+            pu.print_error("Please run your program before loading libptmalloc")
+            return
 
         # Try to automatically figure out glibc version and configuration
         glibc_version = self.dbg.get_libc_version()
