@@ -53,7 +53,7 @@ class ptchunk(ptcmd.ptcmd):
         super(ptchunk, self).__init__(ptm, "ptchunk")
 
         self.parser = argparse.ArgumentParser(
-            description="""Show one or more chunks metadata and contents
+            description="""Show one or more chunks' header and contents
 
 Can provide you with a summary of a chunk (one-line) or more verbose information 
 of every field (multiple lines). 
