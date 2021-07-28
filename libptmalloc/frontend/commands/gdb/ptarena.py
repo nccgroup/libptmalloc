@@ -90,6 +90,13 @@ Analyze the malloc_state structure's fields.""",
         elif self.args.verbose >= 1:
             print(self.cache.mstate.to_string(self.args.verbose))
 
+    def print_arena_address(self, address):
+        if address == self.cache.main_arena_address:
+            print("  main_arena @ ", end="")
+        else:
+            print("       arena @ ", end="")
+        pu.print_header("{:#x}".format(int(address)), end="\n")
+
     def list_arenas(self):
         """List the arena addresses only
         """
@@ -102,8 +109,7 @@ Analyze the malloc_state structure's fields.""",
             return
 
         print("Arena(s) found:", end="\n")
-        print("  arena @ ", end="")
-        pu.print_header("{:#x}".format(int(mstate.address)), end="\n")
+        self.print_arena_address(mstate.address)
 
         if mstate.address != mstate.next:
             # we have more than one arena
@@ -113,8 +119,7 @@ Analyze the malloc_state structure's fields.""",
             )
 
             while mstate.address != curr_arena.address:
-                print("  arena @ ", end="")
-                pu.print_header("{:#x}".format(int(curr_arena.address)), end="\n")
+                self.print_arena_address(curr_arena.address)
                 curr_arena = ms.malloc_state(
                     self.ptm, curr_arena.next, debugger=self.dbg, version=self.version
                 )

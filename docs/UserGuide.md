@@ -54,7 +54,7 @@ ptmeta              Handle metadata associated with chunk addresses
 ptarena             Print arena(s) information
 ptparam             Print malloc parameter(s) information
 ptlist              Print a flat listing of all the chunks in an arena
-ptchunk             Show one or more chunks metadata and contents
+ptchunk             Show one or more chunks' header and contents
 ptbin               Print unsorted/small/large bins information
 ptfast              Print fast bins information
 pttcache            Print tcache bins information
@@ -155,8 +155,8 @@ We list all the arenas:
 Retrieving 'main_arena'
 Caching global 'main_arena' @ 0x7ffff7baec40
 Arena(s) found:
-  arena @ 0x7ffff7baec40
-  arena @ 0x7ffff0000020
+  main_arena @ 0x7ffff7baec40
+       arena @ 0x7ffff0000020
 ```
 
 We show the arena fields:
@@ -1008,7 +1008,7 @@ usage:  [-v] [-h] [-c COUNT] [-x] [-X HEXDUMP_UNIT] [-m MAXBYTES] [-n] [-p PRINT
         [-o]
         [addresses [addresses ...]]
 
-Show one or more chunks metadata and contents
+Show one or more chunks' header and contents
 
 Can provide you with a summary of a chunk (one-line) or more verbose information 
 of every field (multiple lines). 
